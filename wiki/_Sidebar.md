@@ -23,5 +23,8 @@
 - [Building and Self-Hosting](Building-and-Self-Hosting)
 - [CSV Data Format Reference](CSV-Data-Format-Reference)
 
+### Planning
+- [Roadmap](Roadmap)
+
 ### Reference
 - [Glossary](Glossary)

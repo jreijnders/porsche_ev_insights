@@ -9,6 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import { JSDOM } from 'jsdom';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -22,20 +23,41 @@ const PORT = process.env.PORT || 3001;
 // Token persistence file path
 const TOKEN_FILE = path.join(__dirname, '.tokens.json');
 
-// Porsche Connect API configuration
+// Porsche Connect API configuration (updated to match current mobile app flow)
 const CONFIG = {
   AUTHORIZATION_SERVER: 'identity.porsche.com',
   API_BASE_URL: 'https://api.ppa.porsche.com/app',
-  CLIENT_ID: 'XhygisuebbrqQ80byOuU5VncxLIm8E6H',
-  X_CLIENT_ID: '41843fb4-691d-4970-85c7-2673e8ecef40',
-  REDIRECT_URI: 'my-porsche-app://auth0/callback',
-  USER_AGENT: 'porsche-ev-insights/1.0',
+  CLIENT_ID: 'qIkoJqlAXvbj4R3j12ct3zdinPId0Zbl',
+  X_CLIENT_ID: '09fcb5d8-d4ad-48e8-a0e8-a9c7cb1b9cbc',
+  REDIRECT_URI: 'https://security.porsche.com/auth/en-GB/app/callback',
+  USER_AGENT: 'de.porsche.one/18.26.09-row+162630 (android)',
   SCOPES: [
     'openid', 'profile', 'email', 'offline_access', 'mbb', 'ssodb',
     'badge', 'vin', 'dealers', 'cars', 'charging', 'manageCharging',
     'pid:user_profile.porscheid:read', 'pid:user_profile.vehicles:read'
   ]
 };
+
+// PKCE helpers
+function generatePKCEVerifier() {
+  return crypto.randomBytes(64).toString('base64url');
+}
+
+function buildPKCEChallenge(verifier) {
+  return crypto.createHash('sha256').update(verifier, 'ascii').digest('base64url');
+}
+
+// Extract Auth0 universal login context from inline base64 JSON in HTML
+function extractUniversalLoginContext(html) {
+  const match = html.match(/atob\("([A-Za-z0-9+/=]+)"\)/);
+  if (!match) return null;
+  try {
+    const payload = Buffer.from(match[1], 'base64').toString('utf-8');
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
 
 // Trip statistics measurement keys
 const TRIP_STATISTICS = [
@@ -153,10 +175,24 @@ function generateState() {
   return Math.random().toString(36).substring(2, 15);
 }
 
-// Helper to extract cookies from response headers
-function extractCookies(response) {
-  const cookies = response.headers.raw()['set-cookie'] || [];
-  return cookies.map(c => c.split(';')[0]).join('; ');
+// Cookie jar: merges cookies by name so updated values replace old ones
+function mergeCookies(existingCookieStr, response) {
+  const jar = new Map();
+  // Parse existing cookies
+  if (existingCookieStr) {
+    for (const pair of existingCookieStr.split('; ')) {
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx > 0) jar.set(pair.substring(0, eqIdx), pair);
+    }
+  }
+  // Merge new Set-Cookie headers (overwrite by name)
+  const setCookies = response.headers.raw()['set-cookie'] || [];
+  for (const raw of setCookies) {
+    const nameValue = raw.split(';')[0];
+    const eqIdx = nameValue.indexOf('=');
+    if (eqIdx > 0) jar.set(nameValue.substring(0, eqIdx), nameValue);
+  }
+  return Array.from(jar.values()).join('; ');
 }
 
 // Helper to resolve potentially relative URLs
@@ -173,7 +209,7 @@ function resolveUrl(location, baseUrl) {
   }
 }
 
-// OAuth2 Authentication endpoint
+// OAuth2 Authentication endpoint (updated for mobile app flow with PKCE)
 app.post('/api/auth/login', async (req, res) => {
   const { email, password, captchaCode, captchaState } = req.body;
 
@@ -187,6 +223,7 @@ app.post('/api/auth/login', async (req, res) => {
     const authBaseUrl = `https://${CONFIG.AUTHORIZATION_SERVER}`;
     let cookies = '';
     let loginState = '';
+    let codeVerifier = generatePKCEVerifier();
 
     // Check if this is a captcha retry (we have stored cookies)
     if (captchaCode && captchaState) {
@@ -195,7 +232,7 @@ app.post('/api/auth/login', async (req, res) => {
         console.log('[Auth] Resuming captcha session with stored cookies');
         cookies = storedSession.cookies;
         loginState = captchaState;
-        // Clean up the stored session
+        codeVerifier = storedSession.codeVerifier || codeVerifier;
         captchaSessionStore.delete(captchaState);
       } else {
         console.log('[Auth] No stored session for captcha state, starting fresh');
@@ -206,8 +243,9 @@ app.post('/api/auth/login', async (req, res) => {
     if (!cookies) {
       const state = generateState();
       const scope = CONFIG.SCOPES.join(' ');
+      const codeChallenge = buildPKCEChallenge(codeVerifier);
 
-      // Step 1: Initialize authorization request
+      // Step 1: Initialize authorization request with PKCE
       const authUrl = new URL(`https://${CONFIG.AUTHORIZATION_SERVER}/authorize`);
       authUrl.searchParams.set('response_type', 'code');
       authUrl.searchParams.set('client_id', CONFIG.CLIENT_ID);
@@ -215,8 +253,11 @@ app.post('/api/auth/login', async (req, res) => {
       authUrl.searchParams.set('scope', scope);
       authUrl.searchParams.set('state', state);
       authUrl.searchParams.set('audience', 'https://api.porsche.com');
+      authUrl.searchParams.set('response_mode', 'query');
+      authUrl.searchParams.set('code_challenge', codeChallenge);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
 
-      console.log(`[Auth] Step 1: Initiating OAuth at ${authUrl.toString()}`);
+      console.log(`[Auth] Step 1: Initiating OAuth with PKCE`);
       const authResponse = await fetch(authUrl.toString(), {
         method: 'GET',
         headers: { 'User-Agent': CONFIG.USER_AGENT },
@@ -224,37 +265,74 @@ app.post('/api/auth/login', async (req, res) => {
       });
 
       console.log(`[Auth] Step 1 response: ${authResponse.status}`);
-      cookies = extractCookies(authResponse);
+      cookies = mergeCookies(cookies, authResponse);
 
       // Follow redirects to get to login page
       let location = resolveUrl(authResponse.headers.get('location'), authBaseUrl);
       console.log(`[Auth] Redirect to: ${location}`);
       let loginPageHtml = '';
 
+      // Extract state from the redirect URL query params (most reliable method)
       if (location) {
-        const loginPageResponse = await fetch(location, {
-          headers: {
-            'User-Agent': CONFIG.USER_AGENT,
-            'Cookie': cookies
-          },
-          redirect: 'manual'
-        });
-        cookies += '; ' + extractCookies(loginPageResponse);
+        try {
+          const redirectUrl = new URL(location);
+          const urlState = redirectUrl.searchParams.get('state');
+          if (urlState) {
+            loginState = urlState;
+            console.log(`[Auth] Extracted state from redirect URL`);
+          }
+        } catch { /* ignore parse errors */ }
+
+        // Follow redirect chain to the actual login page, collecting cookies at each hop
+        let loginPageUrl = location;
+        let loginPageResponse;
+        for (let i = 0; i < 5; i++) {
+          loginPageResponse = await fetch(loginPageUrl, {
+            headers: {
+              'User-Agent': CONFIG.USER_AGENT,
+              'Cookie': cookies
+            },
+            redirect: 'manual'
+          });
+          cookies = mergeCookies(cookies, loginPageResponse);
+          console.log(`[Auth] Login page fetch ${i}: status=${loginPageResponse.status}`);
+          if (loginPageResponse.status === 302 || loginPageResponse.status === 301) {
+            loginPageUrl = resolveUrl(loginPageResponse.headers.get('location'), authBaseUrl);
+            console.log(`[Auth] Login page redirect to: ${loginPageUrl}`);
+          } else {
+            break;
+          }
+        }
         loginPageHtml = await loginPageResponse.text();
       } else {
         loginPageHtml = await authResponse.text();
       }
 
-      // Parse the login page to get the state parameter
-      const dom = new JSDOM(loginPageHtml);
-      const stateInput = dom.window.document.querySelector('input[name="state"]');
-      loginState = stateInput?.value || state;
+      // Always try universal login context (ACUL pages embed state in base64 JSON)
+      const ulContext = extractUniversalLoginContext(loginPageHtml);
+      if (ulContext) {
+        console.log(`[Auth] Universal login context keys: ${Object.keys(ulContext).join(', ')}`);
+        if (ulContext.state) {
+          console.log(`[Auth] UL context state: ${ulContext.state.substring(0, 30)}...`);
+          console.log(`[Auth] URL state: ${loginState.substring(0, 30)}...`);
+          loginState = ulContext.state;
+          console.log(`[Auth] Using state from universal login context`);
+        }
+      } else {
+        console.log(`[Auth] No universal login context found, checking hidden input...`);
+        if (!loginState) {
+          const dom = new JSDOM(loginPageHtml);
+          const stateInput = dom.window.document.querySelector('input[name="state"]');
+          loginState = stateInput?.value || state;
+          console.log(`[Auth] Extracted state from ${stateInput ? 'hidden input' : 'generated fallback'}`);
+        }
+      }
     }
 
     // Step 2: Submit email (identifier-first flow)
     const effectiveState = captchaState || loginState;
 
-    console.log(`[Auth] Step 2: Submitting email${captchaCode ? ' with captcha' : ''}`);
+    console.log(`[Auth] Step 2: Submitting email${captchaCode ? ' with captcha' : ''} (state: ${effectiveState.substring(0, 20)}...)`);
     const identifierUrl = `https://${CONFIG.AUTHORIZATION_SERVER}/u/login/identifier`;
 
     const identifierBody = {
@@ -283,46 +361,80 @@ app.post('/api/auth/login', async (req, res) => {
       redirect: 'manual'
     });
 
-    cookies += '; ' + extractCookies(identifierResponse);
+    cookies = mergeCookies(cookies, identifierResponse);
     console.log(`[Auth] Step 2 response: ${identifierResponse.status}`);
 
     if (identifierResponse.status === 400) {
       const errorHtml = await identifierResponse.text();
+      const errorContext = extractUniversalLoginContext(errorHtml);
 
-      // Check if captcha is required - parse the SVG image
-      if (errorHtml.includes('captcha')) {
-        console.log('[Auth] Captcha required, extracting image...');
-        const dom = new JSDOM(errorHtml);
-        const captchaImg = dom.window.document.querySelector('img[alt="captcha"]');
+      // Check for captcha in ACUL context (new Auth0 Universal Login)
+      const captchaFromContext = errorContext?.screen?.captcha?.image;
+      // Also check legacy HTML captcha
+      const dom = new JSDOM(errorHtml);
+      const captchaImg = dom.window.document.querySelector('img[alt="captcha"]');
+      const captchaSrc = captchaFromContext || captchaImg?.getAttribute('src');
 
-        if (captchaImg) {
-          const captchaSrc = captchaImg.getAttribute('src');
-          console.log('[Auth] Found captcha image, storing session cookies');
+      if (captchaSrc) {
+        console.log(`[Auth] Captcha required (source: ${captchaFromContext ? 'ACUL context' : 'HTML img'})`);
 
-          // Store cookies for when user retries with captcha
-          captchaSessionStore.set(effectiveState, {
-            cookies,
-            email,
-            timestamp: Date.now()
-          });
+        // Extract state from the error page context (may differ from original)
+        const captchaPageState = errorContext?.transaction?.state || effectiveState;
 
-          // Clean up old captcha sessions (older than 5 minutes)
-          for (const [key, value] of captchaSessionStore.entries()) {
-            if (Date.now() - value.timestamp > 300000) {
-              captchaSessionStore.delete(key);
-            }
+        captchaSessionStore.set(captchaPageState, {
+          cookies,
+          email,
+          codeVerifier,
+          timestamp: Date.now()
+        });
+
+        // Clean up old captcha sessions (older than 5 minutes)
+        for (const [key, value] of captchaSessionStore.entries()) {
+          if (Date.now() - value.timestamp > 300000) {
+            captchaSessionStore.delete(key);
           }
-
-          return res.status(400).json({
-            error: 'Captcha required',
-            captchaRequired: true,
-            captchaImage: captchaSrc,
-            captchaState: effectiveState
-          });
         }
-        return res.status(400).json({ error: 'Captcha required but could not extract image' });
+
+        return res.status(400).json({
+          error: 'Captcha required',
+          captchaRequired: true,
+          captchaImage: captchaSrc,
+          captchaState: captchaPageState
+        });
       }
-      return res.status(400).json({ error: 'Invalid email address' });
+
+      // No captcha — check for other errors in context
+      const errorMsg = errorContext?.screen?.errors?.[0]?.message
+        || errorContext?.screen?.error?.message
+        || 'Invalid email address';
+      console.log(`[Auth] Step 2 error: ${errorMsg}`);
+      return res.status(400).json({ error: errorMsg });
+    }
+
+    // Step 2b: Follow redirect to password page (collects session cookies)
+    if (identifierResponse.status === 302) {
+      let idRedirect = resolveUrl(identifierResponse.headers.get('location'), authBaseUrl);
+      console.log(`[Auth] Step 2b: Following identifier redirect to: ${idRedirect}`);
+      for (let i = 0; i < 5 && idRedirect; i++) {
+        const idRedirectResp = await fetch(idRedirect, {
+          headers: { 'User-Agent': CONFIG.USER_AGENT, 'Cookie': cookies },
+          redirect: 'manual'
+        });
+        cookies = mergeCookies(cookies, idRedirectResp);
+        if (idRedirectResp.status === 302 || idRedirectResp.status === 301) {
+          idRedirect = resolveUrl(idRedirectResp.headers.get('location'), authBaseUrl);
+          console.log(`[Auth] Step 2b redirect ${i+1}: ${idRedirect}`);
+        } else {
+          const pwPageHtml = await idRedirectResp.text();
+          const pwDom = new JSDOM(pwPageHtml);
+          const pwStateInput = pwDom.window.document.querySelector('input[name="state"]');
+          if (pwStateInput?.value) {
+            console.log(`[Auth] Step 2b: Updated state from password page`);
+            loginState = pwStateInput.value;
+          }
+          break;
+        }
+      }
     }
 
     // Step 3: Submit password
@@ -344,34 +456,28 @@ app.post('/api/auth/login', async (req, res) => {
       redirect: 'manual'
     });
 
-    cookies += '; ' + extractCookies(passwordResponse);
+    cookies = mergeCookies(cookies, passwordResponse);
     console.log(`[Auth] Step 3 response: ${passwordResponse.status}`);
 
     if (passwordResponse.status === 400) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Wait a moment before resuming (as per pyporscheconnectapi)
-    await new Promise(resolve => setTimeout(resolve, 2500));
-
-    // Step 4: Follow redirect to get authorization code
+    // Step 4: Follow redirects to get authorization code
+    // This may include passkey enrollment pages that need to be skipped
     let codeLocation = resolveUrl(passwordResponse.headers.get('location'), authBaseUrl);
     console.log(`[Auth] Step 4: Following redirects, starting at: ${codeLocation}`);
     let authCode = null;
 
-    // Follow redirects until we get the code
-    for (let i = 0; i < 10 && codeLocation && !authCode; i++) {
+    for (let i = 0; i < 15 && codeLocation && !authCode; i++) {
       // Check if this URL contains the authorization code
       if (codeLocation.includes('code=')) {
         try {
           const codeUrl = new URL(codeLocation);
           authCode = codeUrl.searchParams.get('code');
         } catch {
-          // Try to extract from custom scheme URL (my-porsche-app://...)
           const codeMatch = codeLocation.match(/[?&]code=([^&]+)/);
-          if (codeMatch) {
-            authCode = codeMatch[1];
-          }
+          if (codeMatch) authCode = codeMatch[1];
         }
         break;
       }
@@ -384,9 +490,49 @@ app.post('/api/auth/login', async (req, res) => {
         redirect: 'manual'
       });
 
-      cookies += '; ' + extractCookies(redirectResponse);
-      codeLocation = resolveUrl(redirectResponse.headers.get('location'), authBaseUrl);
-      console.log(`[Auth] Step 4 redirect ${i+1}: ${codeLocation}`);
+      cookies = mergeCookies(cookies, redirectResponse);
+
+      if (redirectResponse.status === 302 || redirectResponse.status === 301 || redirectResponse.status === 303) {
+        codeLocation = resolveUrl(redirectResponse.headers.get('location'), authBaseUrl);
+        console.log(`[Auth] Step 4 redirect ${i+1}: ${codeLocation}`);
+      } else {
+        // Got an HTML page - check if it's a passkey enrollment prompt
+        const pageHtml = await redirectResponse.text();
+        const loginContext = extractUniversalLoginContext(pageHtml);
+
+        if (loginContext && (pageHtml.includes('passkey') || pageHtml.includes('webauthn'))) {
+          console.log('[Auth] Passkey enrollment page detected, skipping...');
+
+          // Extract state from the context or the page
+          const dom = new JSDOM(pageHtml);
+          const stateInput = dom.window.document.querySelector('input[name="state"]');
+          const passkeyState = stateInput?.value || loginState;
+
+          // Skip passkey enrollment
+          const skipResponse = await fetch(codeLocation, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'User-Agent': CONFIG.USER_AGENT,
+              'Cookie': cookies
+            },
+            body: new URLSearchParams({
+              state: passkeyState,
+              action: 'abort-passkey-enrollment',
+              'acul-sdk': '@auth0/auth0-acul-js@1.2.0'
+            }).toString(),
+            redirect: 'manual'
+          });
+
+          cookies = mergeCookies(cookies, skipResponse);
+          codeLocation = resolveUrl(skipResponse.headers.get('location'), authBaseUrl);
+          console.log(`[Auth] Passkey skip redirect: ${codeLocation}`);
+        } else {
+          console.log(`[Auth] Step 4: Got non-redirect page at ${codeLocation}`);
+          console.log(`[Auth] Page snippet: ${pageHtml.substring(0, 200)}`);
+          break;
+        }
+      }
     }
 
     if (!authCode) {
@@ -396,20 +542,23 @@ app.post('/api/auth/login', async (req, res) => {
 
     console.log(`[Auth] Got authorization code, exchanging for tokens`);
 
-    // Step 5: Exchange code for tokens
+    // Step 5: Exchange code for tokens (with PKCE code_verifier)
     const tokenUrl = `https://${CONFIG.AUTHORIZATION_SERVER}/oauth/token`;
+    const tokenBody = {
+      grant_type: 'authorization_code',
+      client_id: CONFIG.CLIENT_ID,
+      code: authCode,
+      redirect_uri: CONFIG.REDIRECT_URI,
+      code_verifier: codeVerifier
+    };
+
     const tokenResponse = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': CONFIG.USER_AGENT
       },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: CONFIG.CLIENT_ID,
-        code: authCode,
-        redirect_uri: CONFIG.REDIRECT_URI
-      }).toString()
+      body: new URLSearchParams(tokenBody).toString()
     });
 
     if (!tokenResponse.ok) {
