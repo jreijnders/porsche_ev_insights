@@ -3,13 +3,14 @@
  * STATELESS: Session data is encoded/decoded from client requests
  */
 
-// Porsche Connect API configuration
+// Porsche Connect API configuration (updated to match current mobile app flow)
 export const CONFIG = {
   API_BASE_URL: 'https://api.ppa.porsche.com/app',
-  X_CLIENT_ID: '41843fb4-691d-4970-85c7-2673e8ecef40',
-  USER_AGENT: 'porsche-ev-insights/1.0',
+  X_CLIENT_ID: '09fcb5d8-d4ad-48e8-a0e8-a9c7cb1b9cbc',
+  USER_AGENT: 'de.porsche.one/18.26.09-row+162630 (android)',
   AUTHORIZATION_SERVER: 'identity.porsche.com',
-  CLIENT_ID: 'XhygisuebbrqQ80byOuU5VncxLIm8E6H'
+  CLIENT_ID: 'qIkoJqlAXvbj4R3j12ct3zdinPId0Zbl',
+  REDIRECT_URI: 'https://security.porsche.com/auth/en-GB/app/callback'
 };
 
 // Decode session data from client
