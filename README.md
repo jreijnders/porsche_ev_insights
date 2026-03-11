@@ -253,6 +253,13 @@ Contributions are welcome! Feel free to:
 
 ## Release History
 
+### v2.1.0-beta (March 2026)
+- **Porsche Connect auth fix**: Updated OAuth flow to match Porsche's new mobile app authentication (PKCE, Auth0 ACUL)
+- **Passkey enrollment skip**: Automatically skips passkey enrollment prompts during login
+- **Improved captcha handling**: Captcha detection now works with Auth0's new universal login pages
+- **Better cookie management**: Cookie jar properly merges values instead of naive concatenation
+- **Production auth fix**: Updated Vercel serverless functions with the new auth flow
+
 ### v2.0.2-beta (February 2026)
 - **Multi-vehicle support**: Vehicle selector for Porsche Connect accounts with multiple cars
 - **VIN persistence**: Remembers your selected vehicle across sessions
