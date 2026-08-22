@@ -14,6 +14,8 @@
  * Pure. The database half lives in service.ts.
  */
 
+import { AMSTERDAM, monthKeyOf } from '../time/month.js';
+
 export interface Reading {
   at: Date;
   mileageKm: number;
@@ -158,29 +160,12 @@ export interface MonthReconciliation {
   settlingCount: number;
 }
 
-/**
- * Attributes a window to a month by its LATER reading, and rolls the month up.
- *
- * Month keys use Europe/Amsterdam (#14): a boundary at midnight UTC sits at
- * 02:00 local in summer, which silently moves kilometres between two months.
- */
-export function monthKeyOf(date: Date, timeZone = 'Europe/Amsterdam'): string {
-  // en-CA gives YYYY-MM-DD, so slicing to 7 characters is safe and locale-proof.
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-    .format(date)
-    .slice(0, 7);
-}
-
+/** A window belongs to the month of its LATER reading. */
 export function reconcileMonth(
   month: string,
   windows: readonly ReconWindow[],
   earliestReadingAt: Date | null,
-  timeZone = 'Europe/Amsterdam',
+  timeZone: string = AMSTERDAM,
 ): MonthReconciliation {
   const mine = windows.filter((w) => monthKeyOf(w.toAt, timeZone) === month);
 

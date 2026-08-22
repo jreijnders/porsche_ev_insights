@@ -10,34 +10,43 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 
 import { place, trip } from '../../db/schema.js';
 import { db } from '../db/client.js';
+import { summarise } from '../ledger/summary.js';
 import { firstFixAt } from '../places/service.js';
 import { acknowledgeGap, reconcileVehicleMonth } from '../reconcile/service.js';
+import { AMSTERDAM, monthRangeOf } from '../time/month.js';
 
-/** Month boundaries in UTC. Attribution is by trip START (#8). */
-function monthRange(month: string): { from: Date; to: Date } | null {
-  const match = /^(\d{4})-(\d{2})$/.exec(month);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const m = Number(match[2]);
-  if (m < 1 || m > 12) return null;
-  return {
-    from: new Date(Date.UTC(year, m - 1, 1)),
-    to: new Date(Date.UTC(m === 12 ? year + 1 : year, m === 12 ? 0 : m, 1)),
-  };
-}
+/**
+ * Attribution is by trip START (#8), at the Europe/Amsterdam boundary (#14).
+ *
+ * Both the range filter below and the /months grouping derive from the same
+ * zone. They have to: a filter and a grouping that disagree put a trip in one
+ * month's list and another month's picker.
+ */
+const monthRange = (month: string) => monthRangeOf(month, AMSTERDAM);
 
 const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  /**
+   * The month key, as ONE expression reused by select, group and order.
+   *
+   * The zone is inlined rather than interpolated: an interpolated string becomes
+   * a bound parameter, and three separate parameters make three structurally
+   * different expressions, so Postgres cannot match the GROUP BY to the
+   * projection ("column trip.started_at must appear in the GROUP BY clause").
+   * sql.raw is safe here because AMSTERDAM is our own constant, never input.
+   */
+  const monthExpr = sql`to_char(${trip.startedAt} at time zone ${sql.raw(`'${AMSTERDAM}'`)}, 'YYYY-MM')`;
+
   /** Months that have trips, newest first, for the picker. */
   app.get('/months', async () => {
     const rows = await db
       .select({
-        month: sql<string>`to_char(${trip.startedAt}, 'YYYY-MM')`.as('month'),
+        month: sql<string>`${monthExpr}`.as('month'),
         trips: sql<number>`count(*)::int`.as('trips'),
         unchecked: sql<number>`count(*) filter (where ${trip.checkedAt} is null)::int`.as('unchecked'),
       })
       .from(trip)
-      .groupBy(sql`to_char(${trip.startedAt}, 'YYYY-MM')`)
-      .orderBy(desc(sql`to_char(${trip.startedAt}, 'YYYY-MM')`));
+      .groupBy(monthExpr)
+      .orderBy(desc(monthExpr));
     return { months: rows };
   });
 
@@ -87,8 +96,6 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       endPlace: row.endPlaceId === null ? null : byId.get(row.endPlaceId) ?? null,
     }));
 
-    const loggedKm = trips.reduce((sum, t) => sum + t.distanceKm, 0);
-
     // Trips older than this predate position tracking, so an absent place is a
     // gap in the evidence rather than a failed match (#11). Derived, not stored.
     // The VIN is looked up separately rather than selected into the rows above:
@@ -108,14 +115,7 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       month: request.params.month,
       positionTrackingSince: trackingSince,
       summary: {
-        trips: trips.length,
-        totalKm: loggedKm,
-        invoiceableKm: trips
-          .filter((t) => t.checkedAt !== null && t.purpose === 'business' && t.invoiceMonthly)
-          .reduce((sum, t) => sum + t.distanceKm, 0),
-        unchecked: trips.filter((t) => t.checkedAt === null).length,
-        unclassified: trips.filter((t) => t.purpose === null).length,
-        unplaced: trips.filter((t) => t.startPlaceId === null || t.endPlaceId === null).length,
+        ...summarise(trips),
         odometerReadings: reconciliation?.readingCount ?? 0,
       },
       reconciliation: reconciliation?.month ?? null,

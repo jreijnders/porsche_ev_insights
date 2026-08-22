@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_MERGE_CONFIG, mergeSegments, monthKeyOf, type Journey } from './merge.js';
+import { DEFAULT_MERGE_CONFIG, mergeSegments, type Journey } from './merge.js';
 import type { ParsedSegment } from './parse.js';
 
 /** Segment ending at `endIso`, having driven `distanceKm` over `minutes`. */
@@ -175,15 +175,6 @@ describe('mergeSegments — identity', () => {
   });
 });
 
-describe('monthKeyOf', () => {
-  it('attributes a journey to the month of its start, not its end', () => {
-    // Starts 23:40 on 31 July, ends 00:20 on 1 August
-    const result = mergeSegments([seg('2026-08-01T00:20:00Z', 30, 40)], LATER);
-    const j: Journey = result.journeys[0]!;
-    expect(j.startedAt.toISOString()).toBe('2026-07-31T23:40:00.000Z');
-    expect(monthKeyOf(j)).toBe('2026-07');
-  });
-});
 
 describe('mergeSegments — degenerate input', () => {
   it('returns nothing for no segments', () => {

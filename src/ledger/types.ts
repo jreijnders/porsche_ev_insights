@@ -72,6 +72,10 @@ export interface MonthSummary {
   totalKm: number;
   invoiceableKm: number;
   unchecked: number;
+  /** Flagged for billing but not yet checked — excluded from the figure. */
+  uncheckedFlagged: number;
+  /** What those trips are worth. The count alone does not say whether it matters. */
+  uncheckedFlaggedKm: number;
   unclassified: number;
   unplaced: number;
   odometerReadings: number;

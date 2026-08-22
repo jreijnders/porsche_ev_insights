@@ -187,10 +187,3 @@ export function mergeSegments(
 
   return { journeys, droppedCount, droppedDistanceKm };
 }
-
-/** Calendar month a journey belongs to: the month of its START (#8). */
-export function monthKeyOf(journey: Journey): string {
-  const y = journey.startedAt.getUTCFullYear();
-  const m = String(journey.startedAt.getUTCMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}

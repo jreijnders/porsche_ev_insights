@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { monthKeyOf } from '../time/month.js';
 import {
   buildWindows,
-  monthKeyOf,
   reconcileMonth,
   toleranceFor,
   type Reading,

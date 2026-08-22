@@ -297,7 +297,17 @@ export default function LedgerPage() {
               <div className="text-sm font-medium">{formatMonth(month)}</div>
               <Metric label="totaal" value={formatKm(summary.totalKm)} />
               <Metric label="te factureren" value={formatKm(summary.invoiceableKm)} strong />
-              {summary.unchecked > 0 && <Warn>{summary.unchecked} ongecontroleerd</Warn>}
+              {summary.uncheckedFlagged > 0 && (
+                <Warn>
+                  {summary.uncheckedFlagged} gemarkeerd maar ongecontroleerd — {summary.uncheckedFlaggedKm} km niet
+                  meegeteld
+                </Warn>
+              )}
+              {summary.unchecked > summary.uncheckedFlagged && (
+                <span className="text-xs text-zinc-500">
+                  {summary.unchecked - summary.uncheckedFlagged} overig ongecontroleerd
+                </span>
+              )}
               {summary.unplaced > 0 && <Warn>{summary.unplaced} zonder locatie</Warn>}
               <ReconBadge recon={data?.reconciliation ?? null} readings={summary.odometerReadings} />
             </div>
