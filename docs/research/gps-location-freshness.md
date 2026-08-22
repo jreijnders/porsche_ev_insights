@@ -162,7 +162,11 @@ A widely used integration polling stored location every ~32 minutes, indefinitel
 wake-related caveat in its README, is consistent with the stored read being cheap and non-waking. It is
 supporting evidence, not proof.
 
-### Implication for §2.1 of `wiki/Roadmap.md`
+### Implication for the roadmap's planned "Refresh" button
+
+*(Cited from §2.1 of upstream's Roadmap page, which lived at `wiki/Roadmap.md` until that
+vendored copy was deleted (#27). It is still readable at
+<https://github.com/jpleite/porsche_ev_insights/wiki/Roadmap>.)*
 
 The roadmap's planned "Refresh" button using `get_current_overview()` is the **one** feature that would
 introduce wake behaviour. It should stay a deliberate, user-initiated, rate-limited action and must

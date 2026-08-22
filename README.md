@@ -120,10 +120,15 @@ converted incrementally rather than in one sweep.
 - **Restoring an old backup still works.** A backup taken while CSV import existed restores
   normally — the one function that reshapes its trips was kept for exactly that.
 
-## Still inherited from upstream
+## Documentation
 
-- **The [wiki](https://github.com/jpleite/porsche_ev_insights/wiki) describes upstream**, not
-  this fork. Its deployment and data-import pages do not apply here.
+The README you are reading, plus `docs/` for research notes and agent-facing conventions.
+
+Upstream's [wiki](https://github.com/jpleite/porsche_ev_insights/wiki) documents the **original**
+browser-only project. A vendored copy of it used to live in this repo and was deleted: most of it
+described Vercel deploys, GitHub Pages, CSV import and Audi support, none of which exist here, and
+documentation that is confidently wrong is worse than none. Read it for the analytics tabs this
+fork inherited; ignore everything it says about deploying or loading data.
 
 ## Credits
 
