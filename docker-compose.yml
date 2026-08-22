@@ -1,0 +1,42 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ledger}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-ledger}
+      PORT: 3001
+      POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}
+    # LAN/VPN only (#16 on the map): bound to the host, no auth in front of it.
+    # Behind this port sit the Porsche refresh token and a full location history.
+    ports:
+      - "${APP_PORT:-3001}:3001"
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ledger}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-ledger}
+    # Bound to 127.0.0.1 deliberately: `npm run dev:full` needs Postgres from
+    # the host, but the database must not be reachable from the LAN.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ledger} -d ${POSTGRES_DB:-ledger}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  # Backed up at host level (#17). NOTE: that is only safe if your host backup
+  # is snapshot-based (ZFS/btrfs/LVM) — a snapshot of a live Postgres data
+  # directory is crash-consistent and restores fine. A plain rsync/tar of this
+  # directory while Postgres is writing can produce a copy that will not
+  # restore; if that is your setup, add a scheduled pg_dump.
+  pgdata:

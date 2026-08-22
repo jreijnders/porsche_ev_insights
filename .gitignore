@@ -28,3 +28,14 @@ dist-ssr
 
 # Server tokens (sensitive)
 server/.tokens.json
+
+# Environment — Porsche credentials, DB password, Google API key
+.env
+.env.*
+!.env.example
+
+# Local Postgres backups (host-level backup should cover this directory)
+backups/
+
+# Compiled server output
+dist-server

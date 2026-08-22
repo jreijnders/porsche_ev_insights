@@ -1,0 +1,17 @@
+node_modules
+server/node_modules
+dist
+dist-server
+.git
+.github
+.claude
+screenshots
+wiki
+docs
+.env
+.env.*
+!.env.example
+backups
+server/.tokens.json
+*.log
+.DS_Store

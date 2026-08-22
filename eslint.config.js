@@ -5,7 +5,11 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'server']),
+  // 'server' was ignored when it held the Express dev proxy. It now holds the
+  // real backend in TypeScript, which this config cannot lint anyway
+  // (files: **/*.{js,jsx}, and no typescript-eslint). Adding typescript-eslint
+  // is deliberately left out of #17 — see the ticket's open items.
+  globalIgnores(['dist', 'dist-server', 'server', 'db/migrations']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [
