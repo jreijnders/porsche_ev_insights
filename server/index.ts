@@ -16,6 +16,7 @@ import { sql } from 'drizzle-orm';
 
 import { db } from './db/client.js';
 import { getEnv } from './env.js';
+import { initHarvester } from './poller/index.js';
 import porscheRoutes from './routes/porsche.js';
 
 const env = getEnv();
@@ -54,6 +55,7 @@ if (env.isProduction) {
 
 async function shutdown(signal: string) {
   app.log.info({ signal }, 'shutting down');
+  await shutdownHarvester();
   await app.close();
   process.exit(0);
 }
@@ -61,8 +63,16 @@ async function shutdown(signal: string) {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
+// The harvester runs in-process (#9): one service, one container.
+const harvester = initHarvester(app.log, env.pollIntervalMinutes);
+
+async function shutdownHarvester(): Promise<void> {
+  harvester.stop();
+}
+
 try {
   await app.listen({ port: env.port, host: env.host });
+  harvester.start();
 } catch (error) {
   app.log.error(error);
   process.exit(1);

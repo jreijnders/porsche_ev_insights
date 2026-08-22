@@ -4,10 +4,10 @@
 export const OVERVIEW_MEASUREMENTS = [
   'BATTERY_LEVEL', 'E_RANGE', 'MILEAGE', 'GPS_LOCATION',
   'CHARGING_SUMMARY', 'CHARGING_RATE', 'LOCK_STATE_VEHICLE',
-  // Added for the ledger: charging state is free here (same request) and is
-  // what distinguishes a charge stop from a destination.
-  'BATTERY_CHARGING_STATE',
 ] as const;
+// NOTE: BATTERY_CHARGING_STATE is NOT a real key — requested against the live
+// car it came back absent entirely, not even as isEnabled:false (#15 probe).
+// Charging state comes from CHARGING_SUMMARY.status ("NOT_PLUGGED" etc.).
 
 export const TRIP_MEASUREMENTS = [
   'TRIP_STATISTICS_CYCLIC',

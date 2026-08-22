@@ -13,6 +13,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 
 import { login } from '../porsche/auth.js';
+import { getHarvester } from '../poller/index.js';
 import * as captchaStore from '../porsche/captchaStore.js';
 import { PorscheApiError, measurementQuery, porscheGet } from '../porsche/client.js';
 import {
@@ -83,6 +84,9 @@ const porscheRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     }
 
     await saveTokens(result.tokens);
+    // Resume polling immediately (#13): a captcha solved here should not also
+    // require a container restart.
+    getHarvester()?.restart();
     return { authenticated: true, email: result.tokens.email };
   });
 

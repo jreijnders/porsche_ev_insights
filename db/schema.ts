@@ -60,11 +60,15 @@ export const tripSource = pgEnum('trip_source', ['api', 'manual']);
  */
 export const authHealth = pgEnum('auth_health', ['healthy', 'degraded', 'reauth_required']);
 
+/**
+ * Poll/ingest health only. `reauth_required` deliberately does NOT appear
+ * here — auth health is account-scoped and lives on porsche_session (#13).
+ * Two columns that looked like they tracked the same thing now don't.
+ */
 export const syncHealth = pgEnum('sync_health', [
   'healthy',
-  'degraded',        // transient failures, still polling
-  'broken',          // repeated failures, cause unknown
-  'reauth_required', // refresh chain broken — needs a hand-solved captcha (#13)
+  'degraded', // transient failures or a rate-limit backoff; still polling
+  'broken',   // repeated failures, cause unknown
 ]);
 
 /* --------------------------------------------------------------- vehicle */
