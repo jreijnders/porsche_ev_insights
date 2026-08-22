@@ -8,9 +8,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatDay, formatDuration, formatKm, formatMonth, formatTime, isCheckable } from './format';
-import type { LedgerTrip, MonthIndexEntry, MonthPayload, Purpose } from './types';
+import type { LedgerTrip, MonthIndexEntry, MonthPayload, PlaceConfidence, Purpose } from './types';
 
 const API = '/api/ledger';
+const PLACES = '/api/places';
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
@@ -98,6 +99,83 @@ export default function LedgerPage() {
     [month, load],
   );
 
+  /**
+   * Name the place this trip arrived at, from the trip's own fix.
+   *
+   * window.prompt rather than a modal on purpose: the unmatched-place flow —
+   * map popup, nearby list, fuzzy search — is explicitly still fog (#11/#22),
+   * and building half of it here would pre-empt that decision. This is the one
+   * action the ticket does ask for, kept to one keystroke.
+   */
+  const namePlace = useCallback(
+    async (trip: LedgerTrip) => {
+      const label = window.prompt(`Naam voor de bestemming van deze rit (${formatDay(trip.startedAt)}):`);
+      if (!label?.trim()) return;
+      const kind = window.prompt('Soort — home, business of other:', 'business')?.trim();
+      if (kind !== 'home' && kind !== 'business' && kind !== 'other') {
+        setError('Soort moet home, business of other zijn.');
+        return;
+      }
+
+      setBusy(true);
+      try {
+        await json(`${PLACES}/from-trip/${trip.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label.trim(), kind }),
+        });
+        if (month) await load(month);
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [month, load],
+  );
+
+  /** Accept-and-widen. The server recomputes the distance and asks before growing. */
+  const widenForTrip = useCallback(
+    async (trip: LedgerTrip) => {
+      setBusy(true);
+      try {
+        const result = await json<{ place: { label: string } | null; widenedFrom: number; widenedTo: number; fixDistanceM: number }>(
+          `${PLACES}/widen-for-trip/${trip.id}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+        );
+        setError(
+          `${result.place?.label ?? 'Locatie'} opgerekt van ${result.widenedFrom} naar ${result.widenedTo} m (fix lag op ${result.fixDistanceM} m).`,
+        );
+        if (month) await load(month);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [month, load],
+  );
+
+  /** Re-run matching over every unchecked trip. */
+  const rematch = useCallback(async () => {
+    setBusy(true);
+    try {
+      const { summary } = await json<{ summary: { placed: number; ambiguous: number; unmatched: number; preTracking: number } }>(
+        `${PLACES}/rematch`,
+        { method: 'POST' },
+      );
+      setError(
+        `Opnieuw gematcht: ${summary.placed} geplaatst, ${summary.ambiguous} twijfelachtig, ${summary.unmatched} zonder locatie, ${summary.preTracking} van vóór de locatieregistratie.`,
+      );
+      if (month) await load(month);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [month, load]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -130,6 +208,15 @@ export default function LedgerPage() {
         case 'm':
           void mergePrevious(trip);
           break;
+        case 'n':
+          void namePlace(trip);
+          break;
+        case 'w':
+          void widenForTrip(trip);
+          break;
+        case 'r':
+          void rematch();
+          break;
         case 'Enter':
           event.preventDefault();
           if (!isCheckable(trip.status)) {
@@ -144,7 +231,7 @@ export default function LedgerPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [trips, cursor, busy, patch, mergePrevious]);
+  }, [trips, cursor, busy, patch, mergePrevious, namePlace, widenForTrip, rematch]);
 
   const summary = data?.summary;
   const progress = useMemo(() => {
@@ -192,7 +279,7 @@ export default function LedgerPage() {
                 summary.unaccountedKm !== 0 && <Warn>{summary.unaccountedKm} km niet verantwoord</Warn>
               )}
             </div>
-            <div className="mt-2 text-xs text-zinc-500">{progress} · ↑↓ navigeren · b zakelijk · p privé · i factureren · m samenvoegen · ⏎ controleren</div>
+            <div className="mt-2 text-xs text-zinc-500">{progress} · ↑↓ navigeren · b zakelijk · p privé · i factureren · m samenvoegen · n locatie noemen · w oprekken · r hermatchen · ⏎ controleren</div>
           </div>
         )}
 
@@ -203,6 +290,7 @@ export default function LedgerPage() {
               ref={(el) => { rowRefs.current[index] = el; }}
               trip={trip}
               active={index === cursor}
+              trackingSince={data?.positionTrackingSince ?? null}
               onFocus={() => setCursor(index)}
             />
           ))}
@@ -235,12 +323,18 @@ function Warn({ children }: { children: React.ReactNode }) {
 interface TripRowProps {
   trip: LedgerTrip;
   active: boolean;
+  /** When position tracking began; trips older than this were never placeable. */
+  trackingSince: string | null;
   onFocus: () => void;
 }
 
-const TripRow = ({ ref, trip, active, onFocus }: TripRowProps & { ref?: React.Ref<HTMLDivElement> }) => {
+const TripRow = ({ ref, trip, active, trackingSince, onFocus }: TripRowProps & { ref?: React.Ref<HTMLDivElement> }) => {
   const checked = trip.checkedAt !== null;
   const provisional = trip.status === 'provisional';
+  // A trip from before tracking began has no evidence to match against. Saying
+  // "no location" there blames the algorithm for a gap in the data (#11).
+  const preTracking =
+    trackingSince !== null && Date.parse(trip.endedAt) < Date.parse(trackingSince);
 
   return (
     <div
@@ -268,7 +362,9 @@ const TripRow = ({ ref, trip, active, onFocus }: TripRowProps & { ref?: React.Re
       {/* Line 2 — places and the controls */}
       <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm">
         <span className="text-zinc-600 dark:text-zinc-400">
-          {trip.startPlace?.label ?? <Unknown />} → {trip.endPlace?.label ?? <Unknown />}
+          <Place place={trip.startPlace} confidence={trip.startPlaceConfidence} preTracking={preTracking} />
+          {' → '}
+          <Place place={trip.endPlace} confidence={trip.endPlaceConfidence} preTracking={preTracking} />
         </span>
         <span className="flex items-center gap-2 text-xs">
           <Badge on={trip.purpose === 'business'} dim={trip.purpose === null}>
@@ -282,10 +378,15 @@ const TripRow = ({ ref, trip, active, onFocus }: TripRowProps & { ref?: React.Re
       </div>
 
       {/* Uncertainty, inline and visible */}
-      {(provisional || trip.source === 'manual') && (
+      {(provisional || trip.source === 'manual' || preTracking) && (
         <div className="mt-1 text-xs text-zinc-500">
           {provisional && <span title="Kan nog een rit opnemen">● voorlopig — nog niet te controleren</span>}
           {trip.source === 'manual' && <span className="ml-3">✎ handmatig ingevoerd</span>}
+          {preTracking && (
+            <span className="ml-3" title="Er werd nog geen positie vastgelegd toen deze rit plaatsvond">
+              ○ van vóór de locatieregistratie — noteer de locatie handmatig
+            </span>
+          )}
         </div>
       )}
       {(trip.avgConsumptionKwh100km !== null || trip.drivingMinutes !== null) && active && (
@@ -293,14 +394,44 @@ const TripRow = ({ ref, trip, active, onFocus }: TripRowProps & { ref?: React.Re
           {trip.avgConsumptionKwh100km !== null && <>{trip.avgConsumptionKwh100km} kWh/100km · </>}
           {trip.avgSpeedKmh !== null && <>{trip.avgSpeedKmh} km/u · </>}
           {formatDuration(trip.drivingMinutes)} rijtijd
+          {trip.endFixDeltaMinutes !== null && (
+            <span title="Tijd tussen aankomst en de positiemeting waarop de locatie berust">
+              {' · fix +'}{trip.endFixDeltaMinutes} min
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 };
 
-function Unknown() {
-  return <span className="text-amber-700 dark:text-amber-400" title="Nog geen locatie">?</span>;
+/**
+ * A place, with its uncertainty attached rather than hidden.
+ *
+ * The three "no place" cases are deliberately NOT one symbol: a trip from
+ * before tracking, a trip that matched nothing, and a trip never matched are
+ * different problems with different fixes.
+ */
+function Place({
+  place,
+  confidence,
+  preTracking,
+}: {
+  place: { label: string } | null;
+  confidence: PlaceConfidence | null;
+  preTracking: boolean;
+}) {
+  if (place) {
+    return (
+      <span className={confidence === 'low' ? 'text-amber-700 dark:text-amber-400' : undefined}>
+        {place.label}
+        {confidence === 'low' && <span title="Twee locaties liggen bijna even dichtbij — controleer deze">~</span>}
+      </span>
+    );
+  }
+  if (preTracking) return <span className="text-zinc-400" title="Geen positiegegevens uit die periode">—</span>;
+  if (confidence === null) return <span className="text-zinc-400" title="Nog niet gematcht">·</span>;
+  return <span className="text-amber-700 dark:text-amber-400" title="Geen locatie binnen bereik — n om te noemen, w om op te rekken">?</span>;
 }
 
 function Badge({ on, dim, children }: { on: boolean; dim?: boolean; children: React.ReactNode }) {

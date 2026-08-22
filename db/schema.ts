@@ -49,6 +49,14 @@ export const tripPurpose = pgEnum('trip_purpose', ['business', 'private']);
  * A third state for month-close immutability is deliberately absent; that is
  * still fog on the map and would be an additive migration.
  */
+/**
+ * How much to trust a place suggestion (#11). NULLABLE on purpose: null means
+ * "matching has not run for this trip", which is a different thing from 'none'
+ * — "matching ran and found nothing inside any radius". Re-match needs to tell
+ * those apart, and so does anyone reading a row.
+ */
+export const placeConfidence = pgEnum('place_confidence', ['high', 'low', 'none']);
+
 export const tripStatus = pgEnum('trip_status', ['provisional', 'closed']);
 
 export const tripSource = pgEnum('trip_source', ['api', 'manual']);
@@ -150,6 +158,19 @@ export const trip = pgTable(
 
     startPlaceId: integer('start_place_id').references(() => place.id),
     endPlaceId: integer('end_place_id').references(() => place.id),
+
+    /** Null until matching has run; 'none' once it has run and found nothing. */
+    startPlaceConfidence: placeConfidence('start_place_confidence'),
+    endPlaceConfidence: placeConfidence('end_place_confidence'),
+
+    /**
+     * Minutes between endedAt and the position fix used to place the arrival.
+     * Stored because it is the honest measure of how much the suggestion is
+     * worth: position is push-on-event (#3), so the nearest fix after a trip
+     * may be minutes or hours old, and a two-hour-old fix says little about
+     * where the car actually stopped.
+     */
+    endFixDeltaMinutes: integer('end_fix_delta_minutes'),
 
     distanceKm: numeric('distance_km', { precision: 8, scale: 2 }).notNull(),
     drivingMinutes: integer('driving_minutes'),

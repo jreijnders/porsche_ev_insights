@@ -11,6 +11,7 @@ import type { FastifyBaseLogger } from 'fastify';
 import { NotAuthenticatedError } from '../porsche/tokens.js';
 import { PorscheApiError, measurementQuery, porscheGet } from '../porsche/client.js';
 import { OVERVIEW_MEASUREMENTS, TRIP_MEASUREMENTS } from '../porsche/measurements.js';
+import { rematchVehicle } from '../places/service.js';
 import { classify, reactionFor, retryDelayMs } from './backoff.js';
 import {
   ingestTrips,
@@ -130,6 +131,11 @@ export class Harvester {
         );
         ingest = await ingestTrips(vin, trips, now);
         this.stickyCycles -= 1;
+
+        // New trips need placing, and new positions may finally place OLD
+        // trips — a fix that arrives now can name a journey ingested earlier.
+        // Cheap: pure arithmetic over a place book measured in dozens.
+        if (ingest.tripsUpserted > 0) await rematchVehicle(vin);
       }
 
       await recordPoll(vin, true, 'healthy', null, now);

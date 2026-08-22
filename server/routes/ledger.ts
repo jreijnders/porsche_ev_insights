@@ -9,6 +9,7 @@ import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 
 import { odometerReading, place, trip } from '../../db/schema.js';
+import { firstFixAt } from '../places/service.js';
 import { db } from '../db/client.js';
 
 /** Month boundaries in UTC. Attribution is by trip START (#8). */
@@ -56,6 +57,9 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         avgConsumptionKwh100km: trip.avgConsumptionKwh100km,
         avgSpeedKmh: trip.avgSpeedKmh,
         purpose: trip.purpose,
+        startPlaceConfidence: trip.startPlaceConfidence,
+        endPlaceConfidence: trip.endPlaceConfidence,
+        endFixDeltaMinutes: trip.endFixDeltaMinutes,
         invoiceMonthly: trip.invoiceMonthly,
         checkedAt: trip.checkedAt,
         status: trip.status,
@@ -101,8 +105,16 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ? Number(span.highest) - Number(span.lowest)
         : null;
 
+    // Trips older than this predate position tracking, so an absent place is a
+    // gap in the evidence rather than a failed match (#11). Derived, not stored.
+    // The VIN is looked up separately rather than selected into the rows above:
+    // the client has no use for it, and this payload goes to the browser.
+    const [vehicleRow] = await db.select({ vin: trip.vin }).from(trip).limit(1);
+    const trackingSince = vehicleRow ? await firstFixAt(vehicleRow.vin) : null;
+
     return {
       month: request.params.month,
+      positionTrackingSince: trackingSince,
       summary: {
         trips: trips.length,
         totalKm: loggedKm,

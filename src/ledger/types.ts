@@ -1,5 +1,12 @@
 export type Purpose = 'business' | 'private';
 
+/**
+ * How much to trust a place suggestion (#11).
+ * null means matching has not run for this trip — NOT the same as 'none',
+ * which means it ran and found nothing inside any radius.
+ */
+export type PlaceConfidence = 'high' | 'low' | 'none';
+
 export interface PlaceRef {
   id: number;
   label: string;
@@ -23,6 +30,10 @@ export interface LedgerTrip {
   note: string | null;
   startPlace: PlaceRef | null;
   endPlace: PlaceRef | null;
+  startPlaceConfidence: PlaceConfidence | null;
+  endPlaceConfidence: PlaceConfidence | null;
+  /** Minutes between arrival and the fix used to place it. Bigger is weaker evidence. */
+  endFixDeltaMinutes: number | null;
 }
 
 export interface MonthSummary {
@@ -39,6 +50,8 @@ export interface MonthSummary {
 
 export interface MonthPayload {
   month: string;
+  /** When position tracking began. Trips older than this cannot be placed at all. */
+  positionTrackingSince: string | null;
   summary: MonthSummary;
   trips: LedgerTrip[];
 }
