@@ -13,6 +13,11 @@ export interface Env {
   nodeEnv: string;
   /** Poll interval for the position harvester. 15 min default — see #21 on the map. */
   pollIntervalMinutes: number;
+  /**
+   * Optional. Place suggestions need it; everything else works without it, so
+   * a missing key must not stop the container from starting.
+   */
+  googleMapsApiKey: string | null;
   isProduction: boolean;
 }
 
@@ -43,6 +48,7 @@ export function parseEnv(source: Source): Env {
     host: source.HOST ?? '0.0.0.0',
     nodeEnv,
     pollIntervalMinutes,
+    googleMapsApiKey: source.GOOGLE_MAPS_API_KEY?.trim() || null,
     isProduction: nodeEnv === 'production',
   };
 }

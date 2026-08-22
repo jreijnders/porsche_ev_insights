@@ -9,6 +9,9 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER:-ledger}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-ledger}
       PORT: 3001
       POLL_INTERVAL_MINUTES: ${POLL_INTERVAL_MINUTES:-15}
+      # Optional: place suggestions are unavailable without it, but the app
+      # starts fine. Only place_id is ever persisted from Google (EEA terms).
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
     # LAN/VPN only (#16 on the map): bound to the host, no auth in front of it.
     # Behind this port sit the Porsche refresh token and a full location history.
     ports:

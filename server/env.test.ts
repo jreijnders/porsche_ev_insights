@@ -25,6 +25,14 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...minimal, PORT: '' })).not.toThrow();
   });
 
+  it('treats a missing or blank Google key as absent rather than failing', () => {
+    // Place suggestions need it; nothing else does, so a missing key must not
+    // stop the container from starting.
+    expect(parseEnv(minimal).googleMapsApiKey).toBeNull();
+    expect(parseEnv({ ...minimal, GOOGLE_MAPS_API_KEY: '   ' }).googleMapsApiKey).toBeNull();
+    expect(parseEnv({ ...minimal, GOOGLE_MAPS_API_KEY: 'AIzaTest' }).googleMapsApiKey).toBe('AIzaTest');
+  });
+
   it('rejects a poll interval below one minute', () => {
     expect(() => parseEnv({ ...minimal, POLL_INTERVAL_MINUTES: '0' })).toThrow(/at least 1/);
   });
