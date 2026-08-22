@@ -311,6 +311,20 @@ if [[ "$HTTP_CODE" == "200" && -n "${PLACE_IDS// /}" ]]; then
 else
   warn "Verification failed — HTTP $HTTP_CODE"
   [[ -n "$ERROR_MSG" ]] && note "Google said: $ERROR_MSG"
+
+  # New Places reports a missing BILLING LINK as a bare PERMISSION_DENIED,
+  # which is indistinguishable from half a dozen other causes. The legacy
+  # endpoint says it plainly, so use it as a diagnostic probe. This is the
+  # exact failure that got through a run where billing had been "confirmed"
+  # but never actually linked to the project.
+  if [[ "$ERROR_MSG" == *"does not have permission"* || "$HTTP_CODE" == "403" ]]; then
+    LEGACY_MSG=$(curl -sS "https://maps.googleapis.com/maps/api/place/textsearch/json?query=Amsterdam&key=${GOOGLE_MAPS_API_KEY}" 2>/dev/null \
+      | python3 -c "import json,sys; print(json.load(sys.stdin).get('error_message',''))" 2>/dev/null || true)
+    if [[ -n "$LEGACY_MSG" ]]; then
+      note "Diagnostic probe says: $LEGACY_MSG"
+      ERROR_MSG="$LEGACY_MSG"
+    fi
+  fi
   say ""
   say "Most likely causes, in the order worth checking:"
   case "$ERROR_MSG" in
@@ -320,8 +334,11 @@ else
       step "The key's API restriction excludes Places API (New) — redo stage 4." ;;
     *"API key not valid"*|*"API_KEY_INVALID"*)
       step "The key was mistyped or belongs to another project — redo stage 4." ;;
-    *billing*|*BILLING*)
-      step "Billing is not active on the project — redo stage 2." ;;
+    *billing*|*Billing*|*BILLING*)
+      step "Billing is not LINKED to this project — redo stage 2."
+      step "Confirming a billing account exists is not the same as linking it;"
+      step "open Billing → Linked account and attach it to the project."
+      note "Maps Platform requires a linked billing account even for free-tier use." ;;
     *)
       step "Restrictions can take a couple of minutes to propagate — wait, then re-run."
       step "Otherwise check the project selector matched ${GOOGLE_CLOUD_PROJECT} throughout." ;;
