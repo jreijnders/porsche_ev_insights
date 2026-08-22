@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MatchablePlace, TimedFix } from './match.js';
-import { planRematch, type OdometerPoint, type TripForMatch } from './plan.js';
+import { planRematch, suggestPurpose, type OdometerPoint, type TripForMatch } from './plan.js';
 
 const BASE = { lat: 51.93, lon: 4.42 };
 const north = (m: number) => ({ lat: BASE.lat + m / 111_320, lon: BASE.lon });
 
-const HOME: MatchablePlace = { id: 1, ...north(0), matchRadiusM: 150 };
-const OFFICE: MatchablePlace = { id: 2, ...north(5_000), matchRadiusM: 100 };
+const HOME: MatchablePlace = { id: 1, ...north(0), matchRadiusM: 150, kind: 'home' };
+const OFFICE: MatchablePlace = { id: 2, ...north(5_000), matchRadiusM: 100, kind: 'business' };
 const PLACES = [HOME, OFFICE];
 
 const at = (iso: string) => new Date(iso);
@@ -24,6 +24,7 @@ function trip(over: Partial<TripForMatch> & { id: number }): TripForMatch {
     startPlaceId: null,
     endPlaceId: null,
     endPlaceConfidence: null,
+    purpose: null,
     ...over,
   };
 }
@@ -201,8 +202,8 @@ describe('planRematch — origin chaining', () => {
     // Two places close together make the destination ambiguous; the origin
     // chained from it must not claim to be more certain than its source.
     const crowded: MatchablePlace[] = [
-      { id: 1, ...north(5_000), matchRadiusM: 200 },
-      { id: 2, ...north(5_060), matchRadiusM: 200 },
+      { id: 1, ...north(5_000), matchRadiusM: 200, kind: 'business' },
+      { id: 2, ...north(5_060), matchRadiusM: 200, kind: 'business' },
     ];
     const odometer: OdometerPoint[] = [
       { at: at('2026-08-21T08:30:00Z'), mileageKm: 25_600 },
@@ -257,5 +258,92 @@ describe('planRematch — ordering', () => {
     // Reversed input; chaining must still run first -> second.
     const plan = planRematch({ ...BASE_INPUT, trips: [second, first], fixes, odometer });
     expect(plan.updates.find((u) => u.tripId === 2)?.originSource).toBe('chained');
+  });
+});
+
+describe('suggestPurpose — a suggestion, from both endpoints or not at all', () => {
+  it('suggests business when the destination is a business place', () => {
+    expect(suggestPurpose(HOME, OFFICE)).toBe('business');
+  });
+
+  it('suggests business when the ORIGIN is the business place', () => {
+    expect(suggestPurpose(OFFICE, HOME)).toBe('business');
+  });
+
+  it('suggests private when both ends are home or other', () => {
+    const shop: MatchablePlace = { id: 3, ...north(300), matchRadiusM: 100, kind: 'other' };
+    expect(suggestPurpose(HOME, shop)).toBe('private');
+    expect(suggestPurpose(shop, shop)).toBe('private');
+    expect(suggestPurpose(HOME, HOME)).toBe('private');
+  });
+
+  it('has no opinion when either endpoint is unknown', () => {
+    // Guessing from half a journey would be inventing a classification.
+    expect(suggestPurpose(undefined, OFFICE)).toBeNull();
+    expect(suggestPurpose(HOME, undefined)).toBeNull();
+    expect(suggestPurpose(undefined, undefined)).toBeNull();
+  });
+});
+
+describe('planRematch — purpose suggestions never overwrite', () => {
+  const chainable = {
+    odometer: [
+      { at: at('2026-08-21T08:30:00Z'), mileageKm: 25_600 },
+      { at: at('2026-08-21T17:00:00Z'), mileageKm: 25_600 },
+    ],
+    fixes: [fix('2026-08-21T08:35:00Z', north(5_000)), fix('2026-08-21T17:45:00Z', north(10))],
+  };
+  const first = trip({ id: 1, startedAt: at('2026-08-21T08:00:00Z'), endedAt: at('2026-08-21T08:30:00Z') });
+  const second = trip({ id: 2, startedAt: at('2026-08-21T17:00:00Z'), endedAt: at('2026-08-21T17:40:00Z') });
+
+  it('suggests business for a home-to-office trip', () => {
+    // Needs BOTH endpoints, so give trip 1 a departure fix at home. Without one
+    // it has no origin and correctly earns no suggestion — see the next test.
+    const plan = planRematch({
+      ...BASE_INPUT,
+      trips: [first],
+      odometer: chainable.odometer,
+      fixes: [fix('2026-08-21T07:55:00Z', north(10)), ...chainable.fixes],
+    });
+    const update = plan.updates.find((u) => u.tripId === 1);
+    expect(update?.startPlaceId).toBe(HOME.id);
+    expect(update?.endPlaceId).toBe(OFFICE.id);
+    expect(update?.suggestedPurpose).toBe('business');
+  });
+
+  it('suggests nothing when only one endpoint is known', () => {
+    // The first trip has no origin (nothing precedes it, no departure fix), so
+    // there is no complete journey to classify.
+    const plan = planRematch({
+      ...BASE_INPUT,
+      trips: [first],
+      fixes: [fix('2026-08-21T08:35:00Z', north(5_000))],
+    });
+    const update = plan.updates.find((u) => u.tripId === 1);
+    expect(update?.endPlaceId).toBe(OFFICE.id);
+    expect(update?.startPlaceId).toBeNull();
+    expect(update?.suggestedPurpose).toBeNull();
+  });
+
+  it('leaves an already-classified trip alone', () => {
+    // THE important one. Re-running must fill blanks, never replace answers:
+    // purpose has no source of truth except the human, so overwriting would
+    // silently undo hand classification on every unchecked row.
+    const classified = { ...second, purpose: 'private' as const };
+    const plan = planRematch({ ...BASE_INPUT, trips: [first, classified], ...chainable });
+    expect(plan.updates.find((u) => u.tripId === 2)?.suggestedPurpose).toBeNull();
+  });
+
+  it('still suggests for a blank trip in the same run', () => {
+    const classified = { ...first, purpose: 'private' as const };
+    const plan = planRematch({ ...BASE_INPUT, trips: [classified, second], ...chainable });
+    expect(plan.updates.find((u) => u.tripId === 1)?.suggestedPurpose).toBeNull();
+    expect(plan.updates.find((u) => u.tripId === 2)?.suggestedPurpose).toBe('business');
+  });
+
+  it('emits nothing at all for a checked trip, suggestion included', () => {
+    const checked = { ...first, checkedAt: at('2026-08-21T20:00:00Z') };
+    const plan = planRematch({ ...BASE_INPUT, trips: [checked], ...chainable });
+    expect(plan.updates).toEqual([]);
   });
 });

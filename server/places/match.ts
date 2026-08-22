@@ -14,10 +14,14 @@ export interface Coord {
   lon: number;
 }
 
+export type PlaceKind = 'home' | 'business' | 'other';
+
 export interface MatchablePlace extends Coord {
   id: number;
   /** Per-place, because a home with street parking needs a wider net than an office. */
   matchRadiusM: number;
+  /** Used to suggest a trip's purpose (#29); matching itself ignores it. */
+  kind: PlaceKind;
 }
 
 export type Confidence = 'high' | 'low' | 'none';

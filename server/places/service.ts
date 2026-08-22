@@ -39,19 +39,22 @@ export interface RematchSummary {
   ambiguous: number;
   unmatched: number;
   chained: number;
+  /** Trips given a purpose they did not have. Never a reclassification. */
+  purposeSuggested: number;
   preTracking: number;
   skippedChecked: number;
 }
 
 async function loadPlaces(): Promise<MatchablePlace[]> {
   const rows = await db
-    .select({ id: place.id, lat: place.lat, lon: place.lon, matchRadiusM: place.matchRadiusM })
+    .select({ id: place.id, lat: place.lat, lon: place.lon, matchRadiusM: place.matchRadiusM, kind: place.kind })
     .from(place);
   return rows.map((r) => ({
     id: r.id,
     lat: Number(r.lat),
     lon: Number(r.lon),
     matchRadiusM: r.matchRadiusM,
+    kind: r.kind,
   }));
 }
 
@@ -101,6 +104,7 @@ async function loadTrips(vin: string): Promise<TripForMatch[]> {
       startPlaceId: trip.startPlaceId,
       endPlaceId: trip.endPlaceId,
       endPlaceConfidence: trip.endPlaceConfidence,
+      purpose: trip.purpose,
     })
     .from(trip)
     .where(eq(trip.vin, vin))
@@ -153,12 +157,23 @@ async function applyPlan(plan: RematchPlan): Promise<void> {
           endPlaceId: u.endPlaceId,
           endPlaceConfidence: u.endPlaceConfidence,
           endFixDeltaMinutes: u.endFixDeltaMinutes,
+          // Only ever written when it is null, so a hand classification cannot
+          // be undone by a re-run. Spread so the column is untouched otherwise.
+          ...(u.suggestedPurpose === null ? {} : { purpose: u.suggestedPurpose }),
           updatedAt: new Date(),
         })
         // Belt and braces. plan.ts already refuses to emit updates for checked
         // trips and is tested on it; this makes the guarantee true even if a row
-        // is checked between planning and writing.
-        .where(and(eq(trip.id, u.tripId), isNull(trip.checkedAt)));
+        // is checked between planning and writing. The `purpose is null` clause
+        // does the same for the suggestion: if a classification lands between
+        // planning and writing, the write must lose.
+        .where(
+          and(
+            eq(trip.id, u.tripId),
+            isNull(trip.checkedAt),
+            u.suggestedPurpose === null ? undefined : isNull(trip.purpose),
+          ),
+        );
     }
   });
 }
@@ -171,6 +186,7 @@ function summarise(plan: RematchPlan): RematchSummary {
     ambiguous: plan.updates.filter((u) => u.endPlaceConfidence === 'low').length,
     unmatched: plan.updates.filter((u) => u.endPlaceConfidence === 'none').length,
     chained: plan.updates.filter((u) => u.originSource === 'chained').length,
+    purposeSuggested: plan.updates.filter((u) => u.suggestedPurpose !== null).length,
     preTracking: plan.preTrackingTripIds.length,
     skippedChecked: plan.skippedCheckedTripIds.length,
   };

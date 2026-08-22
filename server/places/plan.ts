@@ -19,6 +19,24 @@ import {
   type TimedFix,
 } from './match.js';
 
+export type Purpose = 'business' | 'private';
+
+/**
+ * Suggest a purpose from where a trip began and ended (#29).
+ *
+ * Returns null — meaning "no opinion" — whenever either endpoint is unknown.
+ * Guessing from half a journey would be inventing a classification, and the
+ * value carries a tax meaning even though it no longer gates the figure (#14).
+ */
+export function suggestPurpose(
+  start: MatchablePlace | undefined,
+  end: MatchablePlace | undefined,
+): Purpose | null {
+  if (!start || !end) return null;
+  if (start.kind === 'business' || end.kind === 'business') return 'business';
+  return 'private';
+}
+
 export interface TripForMatch {
   id: number;
   startedAt: Date;
@@ -28,6 +46,8 @@ export interface TripForMatch {
   startPlaceId: number | null;
   endPlaceId: number | null;
   endPlaceConfidence: Confidence | null;
+  /** What the trip is currently classified as. A suggestion never overwrites it. */
+  purpose: Purpose | null;
 }
 
 export interface OdometerPoint {
@@ -56,6 +76,18 @@ export interface TripPlacement {
   endPlaceConfidence: Confidence;
   endFixDeltaMinutes: number | null;
   originSource: OriginSource;
+  /**
+   * A purpose to write, or null to leave the column alone.
+   *
+   * Only ever set for a trip whose purpose is currently NULL. This is the one
+   * place #29 departs from the place-matching precedent, and deliberately:
+   * matching overwrites an unchecked trip's place because GEOMETRY is the
+   * source of truth and re-deriving is safe. Purpose has no such source — the
+   * only authority is the human — so re-running must fill a blank, never
+   * replace an answer. Otherwise every re-match would quietly undo hand
+   * classification on unchecked rows.
+   */
+  suggestedPurpose: Purpose | null;
 }
 
 export interface RematchPlan {
@@ -89,6 +121,7 @@ export function planRematch(input: PlanInput): RematchPlan {
   // on us (#15). Chaining reads the previous trip, so order is correctness here.
   const trips = [...input.trips].sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime());
 
+  const placeById = new Map(places.map((p) => [p.id, p]));
   const updates: TripPlacement[] = [];
   const preTrackingTripIds: number[] = [];
   const skippedCheckedTripIds: number[] = [];
@@ -164,8 +197,17 @@ export function planRematch(input: PlanInput): RematchPlan {
       }
     }
 
+    const suggestedPurpose =
+      trip.purpose === null
+        ? suggestPurpose(
+            startPlaceId === null ? undefined : placeById.get(startPlaceId),
+            endMatch.placeId === null ? undefined : placeById.get(endMatch.placeId),
+          )
+        : null;
+
     updates.push({
       tripId: trip.id,
+      suggestedPurpose,
       startPlaceId,
       startPlaceConfidence: startConfidence,
       endPlaceId: endMatch.placeId,
