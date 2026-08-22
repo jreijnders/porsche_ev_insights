@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { formatDay, formatDuration, formatKm, formatMonth, formatTime, isCheckable } from './format';
-import type { LedgerTrip, MonthIndexEntry, MonthPayload, PlaceConfidence, Purpose } from './types';
+import type { LedgerTrip, MonthIndexEntry, MonthPayload, PlaceConfidence, Purpose, Reconciliation } from './types';
 
 const API = '/api/ledger';
 const PLACES = '/api/places';
@@ -157,6 +157,34 @@ export default function LedgerPage() {
     [month, load],
   );
 
+  /**
+   * Close a gap by adding a manual trip for exactly the missing distance.
+   *
+   * The server recomputes that distance from the window bounds — this screen
+   * may have been rendered before another trip landed, and writing a stale
+   * figure would leave the window still adrift.
+   */
+  const acknowledgeGap = useCallback(
+    async (fromAt: string, toAt: string, km: number) => {
+      if (!window.confirm(`${km} km als handmatige rit toevoegen om dit gat te erkennen?`)) return;
+      setBusy(true);
+      try {
+        const result = await json<{ tripId: number; distanceKm: number }>(`${API}/acknowledge-gap`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fromAt, toAt }),
+        });
+        setError(`Gat erkend: rit ${result.tripId} toegevoegd met ${result.distanceKm} km.`);
+        if (month) await load(month);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [month, load],
+  );
+
   /** Re-run matching over every unchecked trip. */
   const rematch = useCallback(async () => {
     setBusy(true);
@@ -271,14 +299,13 @@ export default function LedgerPage() {
               <Metric label="te factureren" value={formatKm(summary.invoiceableKm)} strong />
               {summary.unchecked > 0 && <Warn>{summary.unchecked} ongecontroleerd</Warn>}
               {summary.unplaced > 0 && <Warn>{summary.unplaced} zonder locatie</Warn>}
-              {summary.unaccountedKm === null ? (
-                <span className="text-xs text-zinc-500">
-                  niet-verantwoorde km: onbekend ({summary.odometerReadings} tellerstanden)
-                </span>
-              ) : (
-                summary.unaccountedKm !== 0 && <Warn>{summary.unaccountedKm} km niet verantwoord</Warn>
-              )}
+              <ReconBadge recon={data?.reconciliation ?? null} readings={summary.odometerReadings} />
             </div>
+            <ReconWindows
+              recon={data?.reconciliation ?? null}
+              busy={busy}
+              onAcknowledge={acknowledgeGap}
+            />
             <div className="mt-2 text-xs text-zinc-500">{progress} · ↑↓ navigeren · b zakelijk · p privé · i factureren · m samenvoegen · n locatie noemen · w oprekken · r hermatchen · ⏎ controleren</div>
           </div>
         )}
@@ -299,6 +326,100 @@ export default function LedgerPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Reconciliation, stated in the direction it actually fails (#12).
+ *
+ * The two directions are never collapsed into one "discrepancy": too FEW
+ * logged kilometres costs you money, too MANY puts kilometres you did not
+ * drive into a figure you invoice. And settling is never dressed up as clean —
+ * "nothing wrong yet" and "not judged yet" are different claims.
+ */
+function ReconBadge({ recon, readings }: { recon: Reconciliation | null; readings: number }) {
+  if (!recon || recon.status === 'not_reconcilable') {
+    return (
+      <span className="text-xs text-zinc-500" title="Zonder twee tellerstanden valt er niets te controleren">
+        niet controleerbaar ({readings} tellerstanden)
+      </span>
+    );
+  }
+
+  switch (recon.status) {
+    case 'over_logged':
+      return (
+        <Warn>
+          {recon.overLoggedKm} km te veel geboekt — zit al in het factuurtotaal
+          {recon.unaccountedKm > 0 && ` · ${recon.unaccountedKm} km niet verantwoord`}
+        </Warn>
+      );
+    case 'unaccounted':
+      return <Warn>{recon.unaccountedKm} km niet verantwoord — mogelijk een ontbrekende rit</Warn>;
+    case 'settling':
+      return (
+        <span className="text-xs text-zinc-500" title="Nog geen latere rit die bewijst dat de historie voorbij dit venster is">
+          nog niet te beoordelen ({recon.settlingCount} venster{recon.settlingCount === 1 ? '' : 's'})
+        </span>
+      );
+    case 'partial':
+      return (
+        <span className="text-xs text-zinc-500">
+          deels gedekt — tellerstanden vanaf {recon.coverageFrom ? formatDay(recon.coverageFrom) : '?'}
+        </span>
+      );
+    default:
+      return <span className="text-xs text-emerald-700 dark:text-emerald-400">✓ sluitend</span>;
+  }
+}
+
+/**
+ * The windows behind a flagged month, so a number can be traced to the span
+ * that caused it rather than being a month-level verdict you cannot argue with.
+ */
+function ReconWindows({
+  recon,
+  busy,
+  onAcknowledge,
+}: {
+  recon: Reconciliation | null;
+  busy: boolean;
+  onAcknowledge: (fromAt: string, toAt: string, km: number) => void;
+}) {
+  if (!recon || (recon.status !== 'unaccounted' && recon.status !== 'over_logged')) return null;
+  const flagged = recon.windows.filter((w) => w.verdict === 'unaccounted' || w.verdict === 'over_logged');
+  if (flagged.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-1 border-t border-zinc-200 pt-2 dark:border-zinc-800">
+      {flagged.map((w) => (
+        <div key={`${w.fromAt}-${w.toAt}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs">
+          <span className="text-zinc-500">
+            {formatDay(w.fromAt)}–{formatDay(w.toAt)}
+          </span>
+          <span className="tabular-nums">
+            teller {w.odometerDeltaKm} km · geboekt {w.loggedKm} km ({w.tripCount} ritten)
+          </span>
+          <span className={w.verdict === 'over_logged' ? 'font-semibold text-red-700 dark:text-red-400' : 'font-semibold text-amber-700 dark:text-amber-400'}>
+            {w.differenceKm > 0 ? `+${w.differenceKm}` : w.differenceKm} km
+          </span>
+          <span className="text-zinc-400">tolerantie {w.toleranceKm} km</span>
+          {w.verdict === 'unaccounted' && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onAcknowledge(w.fromAt, w.toAt, w.differenceKm)}
+              className="rounded border border-zinc-300 px-2 py-0.5 font-sans hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            >
+              erken als rit
+            </button>
+          )}
+          {w.verdict === 'over_logged' && (
+            <span className="font-sans text-zinc-500">verwijder de dubbele rit — een handmatige rit maakt dit erger</span>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

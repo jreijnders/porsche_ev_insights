@@ -8,9 +8,10 @@
 import { and, asc, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 
-import { odometerReading, place, trip } from '../../db/schema.js';
-import { firstFixAt } from '../places/service.js';
+import { place, trip } from '../../db/schema.js';
 import { db } from '../db/client.js';
+import { firstFixAt } from '../places/service.js';
+import { acknowledgeGap, reconcileVehicleMonth } from '../reconcile/service.js';
 
 /** Month boundaries in UTC. Attribution is by trip START (#8). */
 function monthRange(month: string): { from: Date; to: Date } | null {
@@ -86,24 +87,7 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       endPlace: row.endPlaceId === null ? null : byId.get(row.endPlaceId) ?? null,
     }));
 
-    // Rough completeness check. Real reconciliation is #12 — this is the
-    // odometer span within the month, which needs at least two readings to
-    // mean anything, and we only started collecting them recently.
-    const odo = await db
-      .select({
-        lowest: sql<string | null>`min(${odometerReading.mileageKm})`,
-        highest: sql<string | null>`max(${odometerReading.mileageKm})`,
-        readings: sql<number>`count(*)::int`,
-      })
-      .from(odometerReading)
-      .where(and(gte(odometerReading.observedAt, range.from), lt(odometerReading.observedAt, range.to)));
-
-    const span = odo[0];
     const loggedKm = trips.reduce((sum, t) => sum + t.distanceKm, 0);
-    const odometerKm =
-      span && span.readings >= 2 && span.lowest !== null && span.highest !== null
-        ? Number(span.highest) - Number(span.lowest)
-        : null;
 
     // Trips older than this predate position tracking, so an absent place is a
     // gap in the evidence rather than a failed match (#11). Derived, not stored.
@@ -111,6 +95,14 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     // the client has no use for it, and this payload goes to the browser.
     const [vehicleRow] = await db.select({ vin: trip.vin }).from(trip).limit(1);
     const trackingSince = vehicleRow ? await firstFixAt(vehicleRow.vin) : null;
+
+    // Reconciliation between consecutive odometer readings (#12), computed on
+    // demand. Replaces the month min/max this route used to do, which dropped
+    // every kilometre driven between one month's last reading and the next
+    // month's first — always in the direction that looks complete.
+    const reconciliation = vehicleRow
+      ? await reconcileVehicleMonth(vehicleRow.vin, request.params.month)
+      : null;
 
     return {
       month: request.params.month,
@@ -124,13 +116,41 @@ const ledgerRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         unchecked: trips.filter((t) => t.checkedAt === null).length,
         unclassified: trips.filter((t) => t.purpose === null).length,
         unplaced: trips.filter((t) => t.startPlaceId === null || t.endPlaceId === null).length,
-        odometerKm,
-        odometerReadings: span?.readings ?? 0,
-        unaccountedKm: odometerKm === null ? null : Math.round((odometerKm - loggedKm) * 10) / 10,
+        odometerReadings: reconciliation?.readingCount ?? 0,
       },
+      reconciliation: reconciliation?.month ?? null,
       trips,
     };
   });
+
+  /**
+   * Close a reconciliation gap by recording the missing driving as a manual
+   * trip (#12).
+   *
+   * The window is identified by its bounds rather than an id because windows
+   * are computed, not stored — and the distance is recomputed server-side, so
+   * a screen rendered before another trip landed cannot write a stale figure.
+   */
+  app.post<{ Body: { fromAt?: string; toAt?: string; note?: string | null } }>(
+    '/acknowledge-gap',
+    async (request, reply) => {
+      const { fromAt, toAt, note } = request.body ?? {};
+      if (!fromAt || !toAt) return reply.status(400).send({ error: 'fromAt and toAt are required' });
+
+      const from = new Date(fromAt);
+      const to = new Date(toAt);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return reply.status(400).send({ error: 'fromAt and toAt must be timestamps' });
+      }
+
+      const [vehicleRow] = await db.select({ vin: trip.vin }).from(trip).limit(1);
+      if (!vehicleRow) return reply.status(409).send({ error: 'No trips yet' });
+
+      const result = await acknowledgeGap(vehicleRow.vin, from, to, note ?? null);
+      if ('error' in result) return reply.status(409).send(result);
+      return reply.status(201).send(result);
+    },
+  );
 
   interface PatchBody {
     purpose?: 'business' | 'private' | null;

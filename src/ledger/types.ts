@@ -36,6 +36,37 @@ export interface LedgerTrip {
   endFixDeltaMinutes: number | null;
 }
 
+export type ReconStatus =
+  | 'quiet'
+  | 'unaccounted'
+  | 'over_logged'
+  | 'settling'
+  | 'not_reconcilable'
+  | 'partial';
+
+export interface ReconWindow {
+  fromAt: string;
+  toAt: string;
+  fromKm: number;
+  toKm: number;
+  odometerDeltaKm: number;
+  loggedKm: number;
+  /** odometer − logged. Positive: a trip is missing. Negative: one is counted twice. */
+  differenceKm: number;
+  tripCount: number;
+  toleranceKm: number;
+  verdict: 'quiet' | 'unaccounted' | 'over_logged' | 'settling';
+}
+
+export interface Reconciliation {
+  status: ReconStatus;
+  unaccountedKm: number;
+  overLoggedKm: number;
+  windows: ReconWindow[];
+  coverageFrom: string | null;
+  settlingCount: number;
+}
+
 export interface MonthSummary {
   trips: number;
   totalKm: number;
@@ -43,15 +74,15 @@ export interface MonthSummary {
   unchecked: number;
   unclassified: number;
   unplaced: number;
-  odometerKm: number | null;
   odometerReadings: number;
-  unaccountedKm: number | null;
 }
 
 export interface MonthPayload {
   month: string;
   /** When position tracking began. Trips older than this cannot be placed at all. */
   positionTrackingSince: string | null;
+  /** Null only when there are no trips at all. */
+  reconciliation: Reconciliation | null;
   summary: MonthSummary;
   trips: LedgerTrip[];
 }
