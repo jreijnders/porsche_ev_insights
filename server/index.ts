@@ -17,6 +17,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db/client.js';
 import { getEnv } from './env.js';
 import { initHarvester } from './poller/index.js';
+import ledgerRoutes from './routes/ledger.js';
 import porscheRoutes from './routes/porsche.js';
 
 const env = getEnv();
@@ -39,6 +40,7 @@ app.get('/api/health', async () => {
 });
 
 await app.register(porscheRoutes, { prefix: '/api/porsche' });
+await app.register(ledgerRoutes, { prefix: '/api/ledger' });
 
 if (env.isProduction) {
   const dist = path.join(repoRoot, 'dist');
