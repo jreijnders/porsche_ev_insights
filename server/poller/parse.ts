@@ -142,6 +142,10 @@ export function parseSegments(payload: MeasurementPayload): ParsedSegment[] {
     });
   }
 
+  // LOAD-BEARING, not defensive tidiness. Probed live on 2026-08-22 (#15):
+  // the API returns SHORT_TERM_HISTORY genuinely unordered — not newest-first,
+  // not oldest-first. The merge rule measures gaps between CONSECUTIVE trips,
+  // so unsorted input would invent stops that never happened. Do not remove.
   segments.sort((a, b) => a.apiEndAt.getTime() - b.apiEndAt.getTime());
   return segments;
 }

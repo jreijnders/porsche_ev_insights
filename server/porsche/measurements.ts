@@ -18,6 +18,12 @@ export const TRIP_MEASUREMENTS = [
   'TRIP_STATISTICS_SHORT_TERM',
 ] as const;
 
+// NOTE: TRIP_STATISTICS_MONTHLY_REPORT is deliberately NOT in the list above.
+// Probed live on 2026-08-22 (#15): the key is recognised — it comes back in the
+// response — but with `isEnabled: false` and no value. So there is no
+// server-side monthly aggregation to lean on; the monthly figure is ours to
+// compute (#14). Re-add only if a probe ever shows it enabled.
+
 export const ALL_MEASUREMENTS = [
   'BATTERY_LEVEL', 'BATTERY_CHARGING_STATE', 'E_RANGE', 'RANGE',
   'CHARGING_SUMMARY', 'CHARGING_RATE', 'CHARGING_PROFILES', 'CHARGING_SETTINGS',

@@ -39,3 +39,8 @@ backups/
 
 # Compiled server output
 dist-server
+
+# Probe payloads — raw trip history (dates + distances). This repo is PUBLIC;
+# a dated record of when and how far the car was driven does not belong in it.
+# Kept locally so probes taken days apart can be compared (#15).
+docs/probes/
