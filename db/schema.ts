@@ -38,7 +38,21 @@ import {
 /** Home gets a wide match radius; business/other are tighter. See #11. */
 export const placeKind = pgEnum('place_kind', ['home', 'business', 'other']);
 
-/** Null purpose on a trip means "not yet classified" — deliberately not a third value here. */
+/**
+ * Two values, settled deliberately (#24) — there is no woon-werkverkeer value
+ * and there should not be one.
+ *
+ * A Dutch rittenregistratie is often split three ways, so the absence looks
+ * like an oversight. It is not: for bijtelling, commuting counts as ZAKELIJK,
+ * so this binary is exactly the line the 500 km privé test draws. And "did I
+ * bill it" is carried separately by invoiceMonthly, so the other reason to
+ * separate commuting is already handled.
+ *
+ * A third value would therefore add a classification step to every commute in
+ * service of a distinction nothing downstream reads.
+ *
+ * Null means "not yet classified" — an absence, not a third category.
+ */
 export const tripPurpose = pgEnum('trip_purpose', ['business', 'private']);
 
 /**
@@ -177,7 +191,11 @@ export const trip = pgTable(
     avgConsumptionKwh100km: numeric('avg_consumption_kwh_100km', { precision: 5, scale: 1 }),
     avgSpeedKmh: numeric('avg_speed_kmh', { precision: 5, scale: 1 }),
 
-    /** Null = not yet classified. Suggested from place kinds, confirmed by the user (#18). */
+    /**
+     * Null = not yet classified. Always set by hand today: the place-kind
+     * suggestion this once promised is NOT implemented (#29). Since #14 the
+     * value gates nothing at all — it is a label, not a control.
+     */
     purpose: tripPurpose('purpose'),
     /** Billing decision, always manual — never inferred from geography. */
     invoiceMonthly: boolean('invoice_monthly').notNull().default(false),
