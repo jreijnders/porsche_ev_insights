@@ -241,6 +241,25 @@ note "  looks like broken geocoding rather than an expired restriction."
 step "  API restrictions → Restrict key → select ONLY 'Places API (New)'."
 step "SAVE. Restrictions can take a minute or two to take effect."
 ask_secret GOOGLE_MAPS_API_KEY "Paste the API key:"
+# Sanity-check the shape before spending a request on it. A double-paste is
+# easy to do with a hidden prompt and otherwise shows up as the unhelpful
+# "API key not valid", which sends you hunting in the console for nothing.
+while [[ -n "${GOOGLE_MAPS_API_KEY}" ]]; do
+  _len=${#GOOGLE_MAPS_API_KEY}
+  if [[ "${GOOGLE_MAPS_API_KEY}" != AIza* ]]; then
+    warn "That does not look like a Google API key (they start with AIza)."
+  elif (( _len == 78 )) && [[ "${GOOGLE_MAPS_API_KEY:0:39}" == "${GOOGLE_MAPS_API_KEY:39:39}" ]]; then
+    warn "That is the same key pasted twice ($_len chars) — trimming to 39."
+    GOOGLE_MAPS_API_KEY="${GOOGLE_MAPS_API_KEY:0:39}"
+    break
+  elif (( _len != 39 )); then
+    warn "Expected 39 characters, got $_len — check for a stray paste or space."
+  else
+    break
+  fi
+  ask_secret GOOGLE_MAPS_API_KEY "Paste the API key again (or Enter to skip):"
+  [[ -z "${GOOGLE_MAPS_API_KEY}" ]] && break
+done
 if [[ -z "${GOOGLE_MAPS_API_KEY}" ]]; then
   warn "No key entered — nothing to verify."
   SKIPPED+=("GOOGLE_MAPS_API_KEY (re-run this wizard)")
