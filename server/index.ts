@@ -16,6 +16,7 @@ import { sql } from 'drizzle-orm';
 
 import { db } from './db/client.js';
 import { getEnv } from './env.js';
+import porscheRoutes from './routes/porsche.js';
 
 const env = getEnv();
 
@@ -35,6 +36,8 @@ app.get('/api/health', async () => {
   await db.execute(sql`select 1`);
   return { ok: true, env: env.nodeEnv };
 });
+
+await app.register(porscheRoutes, { prefix: '/api/porsche' });
 
 if (env.isProduction) {
   const dist = path.join(repoRoot, 'dist');

@@ -41,7 +41,12 @@ export function SettingsPage({
 
   // Check Porsche Connect session status
   useEffect(() => {
-    setPorscheConnected(!!getStoredSession());
+    // The session lives on the server now (#18), so this is async.
+    let cancelled = false;
+    getStoredSession().then((session) => {
+      if (!cancelled) setPorscheConnected(!!session);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Handle Porsche Connect logout

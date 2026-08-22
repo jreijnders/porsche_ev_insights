@@ -7,71 +7,53 @@
 
 import { PORSCHE_EV_MODELS } from '../constants/porscheEvModels';
 
-// In production (Vercel), API routes are at /api/porsche/*
-// In development, they're at localhost:3001/api/* (different path structure)
-const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
-const IS_DEV = import.meta.env.DEV;
-
-// Storage keys for session persistence
-const SESSION_KEY = 'porsche_connect_session';
-const SESSION_EXPIRY_KEY = 'porsche_connect_expiry';
+// The server holds the Porsche session (#18). In development Vite proxies
+// /api to Fastify, so the API is same-origin in both environments — the old
+// IS_DEV / Vercel path juggling is gone, as is the x-session-id header.
+const API_BASE = '/api/porsche';
 
 /**
- * Get stored session ID
+ * Ask the server whether we are authenticated.
+ *
+ * Async by necessity: the session lives in Postgres, not localStorage. Returns
+ * null when there is no usable session, otherwise the session descriptor. A
+ * `reauth_required` health means the refresh chain is broken and only a
+ * hand-solved captcha recovers it.
+ *
+ * @returns {Promise<{email: string, expiresAt: string, health: string} | null>}
  */
-export function getStoredSession() {
+export async function getStoredSession() {
   try {
-    const sessionId = localStorage.getItem(SESSION_KEY);
-    const expiresAt = localStorage.getItem(SESSION_EXPIRY_KEY);
-
-    if (!sessionId || !expiresAt) return null;
-
-    // Check if session is expired (with 5 min buffer)
-    if (Date.now() > parseInt(expiresAt) - 300000) {
-      clearSession();
-      return null;
-    }
-
-    return sessionId;
+    const response = await fetch(`${API_BASE}/session`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.authenticated ? data : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Store session credentials
+ * Full session state including the not-authenticated reason, for the UI to
+ * distinguish "never logged in" from "needs re-authentication".
+ * @returns {Promise<{authenticated: boolean, reason?: string, lastError?: string}>}
  */
-function storeSession(sessionId, expiresIn) {
+export async function getSessionState() {
   try {
-    localStorage.setItem(SESSION_KEY, sessionId);
-    localStorage.setItem(SESSION_EXPIRY_KEY, (Date.now() + expiresIn * 1000).toString());
-  } catch (e) {
-    console.warn('Failed to store session:', e);
+    const response = await fetch(`${API_BASE}/session`);
+    if (!response.ok) return { authenticated: false, reason: 'unreachable' };
+    return await response.json();
+  } catch {
+    return { authenticated: false, reason: 'unreachable' };
   }
 }
 
 /**
- * Clear stored session
- */
-export function clearSession() {
-  try {
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(SESSION_EXPIRY_KEY);
-  } catch (e) {
-    console.warn('Failed to clear session:', e);
-  }
-}
-
-/**
- * Check if proxy server is available
+ * Check the server is up.
  */
 export async function checkServerAvailable() {
   try {
-    const healthUrl = IS_DEV ? `${API_BASE}/api/health` : `${API_BASE}/api/porsche/health`;
-    const response = await fetch(healthUrl, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5000)
-    });
+    const response = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
     return response.ok;
   } catch {
     return false;
@@ -79,53 +61,41 @@ export async function checkServerAvailable() {
 }
 
 /**
- * Login to Porsche Connect
- * @param {string} email - Porsche ID email
- * @param {string} password - Porsche ID password
- * @param {Object} captcha - Optional captcha data
- * @param {string} captcha.code - Captcha code entered by user
- * @param {string} captcha.session - Captcha session data from server (base64 encoded)
- * @returns {Promise<{sessionId: string, expiresIn: number} | {captchaRequired: true, captchaImage: string, captchaSession: string}>}
+ * Log in to Porsche Connect.
+ *
+ * The captcha round-trip now passes an opaque `captchaId`; the cookie jar and
+ * PKCE verifier stay on the server rather than being handed to the browser.
+ *
+ * @param {string} email
+ * @param {string} password
+ * @param {{code: string, id: string} | null} captcha
+ * @returns {Promise<{authenticated: true, email: string} | {captchaRequired: true, captchaImage: string, captchaId: string}>}
  */
 export async function login(email, password, captcha = null) {
   const body = { email, password };
-
-  // Add captcha if provided
-  // Dev server uses captchaState, Vercel uses captchaSession (stateless)
   if (captcha?.code) {
-    if (IS_DEV) {
-      body.captchaCode = captcha.code;
-      body.captchaState = captcha.session; // Dev server uses state-based approach
-    } else {
-      body.captchaCode = captcha.code;
-      body.captchaSession = captcha.session; // Vercel uses stateless session
-    }
+    body.captchaCode = captcha.code;
+    body.captchaId = captcha.id;
   }
 
-  const loginUrl = IS_DEV ? `${API_BASE}/api/auth/login` : `${API_BASE}/api/porsche/login`;
-  const response = await fetch(loginUrl, {
+  const response = await fetch(`${API_BASE}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   });
 
-  // Handle non-JSON responses (e.g., HTML error pages)
   const contentType = response.headers.get('content-type');
   if (!contentType || !contentType.includes('application/json')) {
-    const text = await response.text();
-    console.error('Non-JSON response:', text.slice(0, 500));
     throw new Error('Server returned an invalid response');
   }
 
   const data = await response.json();
 
-  // Handle captcha requirement
-  // Dev server returns captchaState, Vercel returns captchaSession
-  if (response.status === 400 && data.captchaRequired) {
+  if (data.captchaRequired) {
     return {
       captchaRequired: true,
       captchaImage: data.captchaImage,
-      captchaSession: data.captchaSession || data.captchaState // Support both
+      captchaId: data.captchaId
     };
   }
 
@@ -133,99 +103,46 @@ export async function login(email, password, captcha = null) {
     throw new Error(data.error || 'Login failed');
   }
 
-  storeSession(data.sessionId, data.expiresIn);
   return data;
 }
 
 /**
- * Refresh the access token
- * @returns {Promise<boolean>} - Whether refresh was successful
- */
-export async function refreshToken() {
-  const sessionId = getStoredSession();
-  if (!sessionId) return false;
-
-  try {
-    const refreshUrl = IS_DEV ? `${API_BASE}/api/auth/refresh` : `${API_BASE}/api/porsche/refresh`;
-    const response = await fetch(refreshUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId })
-    });
-
-    if (!response.ok) {
-      clearSession();
-      return false;
-    }
-
-    const data = await response.json();
-    // Store the NEW session ID (contains refreshed tokens)
-    storeSession(data.sessionId, data.expiresIn);
-    return true;
-  } catch {
-    clearSession();
-    return false;
-  }
-}
-
-/**
- * Logout from Porsche Connect
+ * Log out — clears the server-side session.
  */
 export async function logout() {
-  const sessionId = getStoredSession();
-  if (sessionId) {
-    try {
-      const logoutUrl = IS_DEV ? `${API_BASE}/api/auth/logout` : `${API_BASE}/api/porsche/logout`;
-      await fetch(logoutUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId })
-      });
-    } catch {
-      // Ignore logout errors
-    }
+  try {
+    await fetch(`${API_BASE}/logout`, { method: 'POST' });
+  } catch {
+    // Ignore: nothing useful to do if the server is unreachable.
   }
-  clearSession();
 }
 
+/** Kept as an alias so callers reading as "forget the session" still work. */
+export const clearSession = logout;
+
 /**
- * Make authenticated API request
- * @param {string} endpoint - API endpoint path
- * @returns {Promise<any>}
+ * Authenticated API request. No headers and no client-side refresh: the server
+ * holds the token and refreshes it just-in-time behind a single-flight lock.
+ * @param {string} endpoint - path under /api/porsche
  */
 async function apiRequest(endpoint) {
-  const sessionId = getStoredSession();
-  if (!sessionId) {
-    throw new Error('Not authenticated');
-  }
-
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: { 'x-session-id': sessionId }
-  });
-
-  if (response.status === 401) {
-    const error = await response.json();
-    if (error.needsRefresh) {
-      const refreshed = await refreshToken();
-      if (refreshed) {
-        // Retry with new token
-        const newSessionId = getStoredSession();
-        const retryResponse = await fetch(`${API_BASE}${endpoint}`, {
-          headers: { 'x-session-id': newSessionId }
-        });
-        if (!retryResponse.ok) {
-          throw new Error('Request failed after token refresh');
-        }
-        return retryResponse.json();
-      }
-    }
-    clearSession();
-    throw new Error('Session expired');
-  }
+  const response = await fetch(`${API_BASE}${endpoint}`);
 
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Request failed');
+    let payload = {};
+    try {
+      payload = await response.json();
+    } catch {
+      // non-JSON error body
+    }
+    if (response.status === 401) {
+      const error = new Error(payload.reason === 'reauth_required'
+        ? 'Re-authentication required'
+        : 'Not authenticated');
+      error.reason = payload.reason;
+      throw error;
+    }
+    throw new Error(payload.error || 'Request failed');
   }
 
   return response.json();
@@ -236,7 +153,7 @@ async function apiRequest(endpoint) {
  * @returns {Promise<Array<Vehicle>>}
  */
 export async function getVehicles() {
-  const endpoint = IS_DEV ? '/api/vehicles' : '/api/porsche/vehicles';
+  const endpoint = '/vehicles';
   return apiRequest(endpoint);
 }
 
@@ -246,18 +163,21 @@ export async function getVehicles() {
  * @returns {Promise<VehicleOverview>}
  */
 export async function getVehicleOverview(vin) {
-  const endpoint = IS_DEV ? `/api/vehicles/${vin}/overview` : `/api/porsche/vehicle/${vin}/overview`;
+  const endpoint = `/vehicle/${vin}/overview`;
   return apiRequest(endpoint);
 }
 
 /**
- * Get trip statistics
+ * Get trip statistics.
+ *
+ * The old `type` parameter is gone: it was appended as ?type= but no handler
+ * ever read it. The route returns all TRIP_STATISTICS_* measurements.
+ *
  * @param {string} vin - Vehicle identification number
- * @param {string} type - 'short' or 'long'
  * @returns {Promise<TripStatistics>}
  */
-export async function getTripStatistics(vin, type = 'short') {
-  const endpoint = IS_DEV ? `/api/vehicles/${vin}/trips?type=${type}` : `/api/porsche/vehicle/${vin}/trips?type=${type}`;
+export async function getTripStatistics(vin) {
+  const endpoint = `/vehicle/${vin}/trips`;
   return apiRequest(endpoint);
 }
 
@@ -267,7 +187,7 @@ export async function getTripStatistics(vin, type = 'short') {
  * @returns {Promise<VehicleStatus>}
  */
 export async function getVehicleStatus(vin) {
-  const endpoint = IS_DEV ? `/api/vehicles/${vin}/status` : `/api/porsche/vehicle/${vin}/status`;
+  const endpoint = `/vehicle/${vin}/status`;
   return apiRequest(endpoint);
 }
 
@@ -277,7 +197,7 @@ export async function getVehicleStatus(vin) {
  * @returns {Promise<VehicleCapabilities>}
  */
 export async function getVehicleCapabilities(vin) {
-  const endpoint = IS_DEV ? `/api/vehicles/${vin}/capabilities` : `/api/porsche/vehicle/${vin}/capabilities`;
+  const endpoint = `/vehicle/${vin}/capabilities`;
   return apiRequest(endpoint);
 }
 
@@ -287,7 +207,7 @@ export async function getVehicleCapabilities(vin) {
  * @returns {Promise<VehiclePictures>}
  */
 export async function getVehiclePictures(vin) {
-  const endpoint = IS_DEV ? `/api/vehicles/${vin}/pictures` : `/api/porsche/vehicle/${vin}/pictures`;
+  const endpoint = `/vehicle/${vin}/pictures`;
   return apiRequest(endpoint);
 }
 

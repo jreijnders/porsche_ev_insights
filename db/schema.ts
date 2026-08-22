@@ -53,6 +53,13 @@ export const tripStatus = pgEnum('trip_status', ['provisional', 'closed']);
 
 export const tripSource = pgEnum('trip_source', ['api', 'manual']);
 
+/**
+ * Auth health is ACCOUNT-scoped, not per-vehicle, so it lives on
+ * porsche_session rather than sync_state (#18). `reauth_required` means the
+ * refresh chain is broken and only a hand-solved captcha can fix it.
+ */
+export const authHealth = pgEnum('auth_health', ['healthy', 'degraded', 'reauth_required']);
+
 export const syncHealth = pgEnum('sync_health', [
   'healthy',
   'degraded',        // transient failures, still polling
@@ -316,7 +323,11 @@ export const syncState = pgTable('sync_state', {
 /**
  * The refresh token now lives server-side rather than in the browser.
  *
- * Encryption at rest is deferred to #13. Note what is behind this row:
+ * Stored in PLAINTEXT, decided knowingly (#18): the container is LAN/VPN-only
+ * with no auth, and the database password already sits in .env on the same
+ * host, so an encryption key beside the data it protects is ceremony rather
+ * than a boundary. The real controls are network isolation and host disk
+ * encryption. Note what is behind this row:
  * access to the vehicle and to a complete location history. The container is
  * LAN/VPN-only with no auth (#16), so this table is the security boundary.
  */
@@ -325,6 +336,10 @@ export const porscheSession = pgTable('porsche_session', {
   accessToken: text('access_token').notNull(),
   refreshToken: text('refresh_token').notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  /** Account-wide auth state. Drives the re-authenticate banner. */
+  health: authHealth('health').notNull().default('healthy'),
+  lastError: text('last_error'),
+  lastRefreshAt: timestamp('last_refresh_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

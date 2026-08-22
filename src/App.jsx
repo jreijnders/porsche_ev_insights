@@ -171,7 +171,7 @@ export default function App() {
   useEffect(() => {
     const autoSync = async () => {
       // Only sync if user has an active session and existing data
-      const session = getStoredSession();
+      const session = await getStoredSession();
       if (!session || rawData.start.length === 0) return;
 
       try {
@@ -259,7 +259,7 @@ export default function App() {
   // Fetch live vehicle data for My Car tab when session exists
   useEffect(() => {
     const fetchLiveVehicleData = async () => {
-      const session = getStoredSession();
+      const session = await getStoredSession();
       if (!session) {
         setLiveVehicleData(null);
         setAvailableVehicles([]);

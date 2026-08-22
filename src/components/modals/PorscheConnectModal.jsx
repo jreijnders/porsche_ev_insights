@@ -21,7 +21,7 @@ export function PorscheConnectModal({
   const [serverAvailable, setServerAvailable] = useState(null);
   // Captcha state
   const [captchaImage, setCaptchaImage] = useState(null);
-  const [captchaSession, setCaptchaSession] = useState(null);
+  const [captchaId, setCaptchaId] = useState(null);
   const [captchaCode, setCaptchaCode] = useState('');
 
   // Check server availability and existing session on mount
@@ -46,7 +46,7 @@ export function PorscheConnectModal({
     }
 
     // Check for existing session
-    const existingSession = porscheConnect.getStoredSession();
+    const existingSession = await porscheConnect.getStoredSession();
     if (existingSession) {
       // Try to fetch vehicles with existing session
       try {
@@ -59,7 +59,7 @@ export function PorscheConnectModal({
         }
       } catch {
         // Session expired, clear and show login
-        porscheConnect.clearSession();
+        await porscheConnect.clearSession();
       }
     }
 
@@ -77,7 +77,7 @@ export function PorscheConnectModal({
       // Check if captcha is required
       if (result.captchaRequired) {
         setCaptchaImage(result.captchaImage);
-        setCaptchaSession(result.captchaSession);
+        setCaptchaId(result.captchaId);
         setCaptchaCode('');
         setStep('captcha');
         setLoading(false);
@@ -114,7 +114,7 @@ export function PorscheConnectModal({
 
   const handleCaptchaSubmit = async (e) => {
     e.preventDefault();
-    await handleLogin(null, { code: captchaCode, session: captchaSession });
+    await handleLogin(null, { code: captchaCode, id: captchaId });
   };
 
   const handleFetchData = async () => {
@@ -342,7 +342,7 @@ export function PorscheConnectModal({
                   onClick={() => {
                     setStep('login');
                     setCaptchaImage(null);
-                    setCaptchaSession(null);
+                    setCaptchaId(null);
                     setCaptchaCode('');
                     setError(null);
                   }}
