@@ -271,7 +271,12 @@ export default function LedgerPage() {
     <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
       <div className="mx-auto max-w-4xl px-4 py-6">
         <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">Rittenregistratie</h1>
+          <h1 className="text-xl font-semibold tracking-tight">
+            Rittenregistratie{' '}
+            <a href="/places" className="text-sm font-normal text-zinc-500 underline-offset-2 hover:underline">
+              locatieboek →
+            </a>
+          </h1>
           <select
             value={month ?? ''}
             onChange={(e) => { setMonth(e.target.value); setCursor(0); }}

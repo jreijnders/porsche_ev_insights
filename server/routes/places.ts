@@ -12,7 +12,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { place, sample, trip } from '../../db/schema.js';
 import { db } from '../db/client.js';
 import { haversineMeters } from '../places/match.js';
-import { DEFAULT_MATCH_CONFIG, rematchVehicle } from '../places/service.js';
+import { DEFAULT_MATCH_CONFIG, placeUsage, rematchVehicle } from '../places/service.js';
 
 type PlaceKind = 'home' | 'business' | 'other';
 
@@ -76,11 +76,17 @@ async function rematchAfterChange(): Promise<void> {
 const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get('/', async () => {
     const rows = await db.select().from(place).orderBy(asc(place.label));
+    const vin = await onlyVin();
+    // Usage is computed, not stored: it is a view of the trips, and a stored
+    // copy would be wrong the moment a re-match moved one.
+    const usage = vin ? await placeUsage(vin) : new Map();
+
     return {
       places: rows.map((p) => ({
         ...p,
         lat: Number(p.lat),
         lon: Number(p.lon),
+        usage: usage.get(p.id) ?? { trips: 0, checkedTrips: 0, nearestMatchM: null, farthestMatchM: null },
       })),
     };
   });

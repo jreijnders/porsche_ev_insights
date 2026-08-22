@@ -13,7 +13,7 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { odometerReading, place, sample, trip } from '../../db/schema.js';
 import { db } from '../db/client.js';
 
-import type { MatchablePlace, TimedFix } from './match.js';
+import { haversineMeters, selectArrivalFix, type MatchablePlace, type TimedFix } from './match.js';
 import { planRematch, type OdometerPoint, type RematchPlan, type TripForMatch } from './plan.js';
 
 export interface MatchConfig {
@@ -196,4 +196,71 @@ export async function firstFixAt(vin: string): Promise<Date | null> {
     .orderBy(asc(sql`coalesce(${sample.eventAt}, ${sample.observedAt})`))
     .limit(1);
   return row ? (row.eventAt ?? row.observedAt) : null;
+}
+
+/* --------------------------------------------------------------- usage */
+
+export interface PlaceUsage {
+  /** Trips naming this place at either end. */
+  trips: number;
+  /** How many of those a human has checked — these block deletion. */
+  checkedTrips: number;
+  /**
+   * How far the matched arrival fixes actually landed from the place, in
+   * metres. This is the radius measured against reality: a place with a 150 m
+   * radius whose farthest real match is 12 m is far wider than it needs to be,
+   * and one whose farthest match is 148 m is one bad park from missing.
+   */
+  nearestMatchM: number | null;
+  farthestMatchM: number | null;
+}
+
+export async function placeUsage(
+  vin: string,
+  config: MatchConfig = DEFAULT_MATCH_CONFIG,
+): Promise<Map<number, PlaceUsage>> {
+  const [places, fixes, trips] = await Promise.all([
+    loadPlaces(),
+    loadFixes(vin),
+    db
+      .select({
+        endedAt: trip.endedAt,
+        checkedAt: trip.checkedAt,
+        startPlaceId: trip.startPlaceId,
+        endPlaceId: trip.endPlaceId,
+      })
+      .from(trip)
+      .where(eq(trip.vin, vin)),
+  ]);
+
+  const byId = new Map(places.map((p) => [p.id, p]));
+  const usage = new Map<number, PlaceUsage>(
+    places.map((p) => [p.id, { trips: 0, checkedTrips: 0, nearestMatchM: null, farthestMatchM: null }]),
+  );
+
+  for (const row of trips) {
+    const referenced = new Set([row.startPlaceId, row.endPlaceId].filter((id): id is number => id !== null));
+    for (const id of referenced) {
+      const entry = usage.get(id);
+      if (!entry) continue;
+      entry.trips += 1;
+      if (row.checkedAt !== null) entry.checkedTrips += 1;
+    }
+
+    // Distance is only meaningful for the END, which is the endpoint geometry
+    // actually chose; an origin is usually chained rather than measured.
+    if (row.endPlaceId === null) continue;
+    const place = byId.get(row.endPlaceId);
+    const entry = usage.get(row.endPlaceId);
+    if (!place || !entry) continue;
+
+    const arrival = selectArrivalFix(row.endedAt, fixes, config.toleranceMinutes);
+    if (!arrival) continue;
+
+    const distance = Math.round(haversineMeters(arrival.fix, place));
+    entry.nearestMatchM = entry.nearestMatchM === null ? distance : Math.min(entry.nearestMatchM, distance);
+    entry.farthestMatchM = entry.farthestMatchM === null ? distance : Math.max(entry.farthestMatchM, distance);
+  }
+
+  return usage;
 }
