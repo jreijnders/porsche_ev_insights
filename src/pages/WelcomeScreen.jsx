@@ -1,6 +1,6 @@
 import { useTranslation } from '../i18n';
 
-export function WelcomeScreen({ setShowUpload, setUseSampleData, setShowPorscheConnect, darkMode }) {
+export function WelcomeScreen({ setUseSampleData, setShowPorscheConnect, darkMode }) {
   const { t } = useTranslation();
 
   return (
@@ -32,17 +32,6 @@ export function WelcomeScreen({ setShowUpload, setUseSampleData, setShowPorscheC
         </button>
 
         {/* CSV Upload - Secondary option */}
-        <button
-          onClick={() => setShowUpload(true)}
-          className={`w-full px-5 py-3 rounded-xl font-medium ${darkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-white' : 'bg-zinc-200 hover:bg-zinc-300 text-zinc-900'}`}
-        >
-          <span className="inline-flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-            </svg>
-            {t('welcome.uploadButton')}
-          </span>
-        </button>
 
         {/* Sample Data - Tertiary option */}
         <button

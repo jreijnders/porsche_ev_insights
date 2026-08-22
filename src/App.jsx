@@ -6,22 +6,20 @@ import { UNIT_SYSTEMS, CURRENCIES, FUEL_CONSUMPTION_FORMATS, ELECTRIC_CONSUMPTIO
 import { SAMPLE_DATA } from './constants/sampleData';
 import { TAYCAN_SPECS } from './constants/taycanSpecs';
 import { STORAGE_KEYS } from './constants/storageKeys';
-import { PORSCHE_EV_MODELS, getVehicleById, guessVehicleFromString, DEFAULT_VEHICLE_ID } from './constants/porscheEvModels';
+import { PORSCHE_EV_MODELS, getVehicleById, DEFAULT_VEHICLE_ID } from './constants/porscheEvModels';
 
 // Utilities
 import { precise } from './utils/precise';
 import { unitConvert } from './utils/unitConvert';
 import { safeStorage } from './utils/storage';
 import { downloadFile } from './utils/download';
-import { parseCSV, parseAudiCSV, isAudiFormat } from './utils/csvParser';
-import JSZip from 'jszip';
 
 // i18n
 import { useTranslation } from './i18n';
 
 // Services
-import { processUploadedData, extractVehicleModel } from './services/dataProcessor';
-import { mergeRawData, reconstructRawDataFromTrips } from './utils/dataMerger';
+import { processUploadedData } from './services/dataProcessor';
+import { reconstructRawDataFromTrips } from './utils/dataMerger';
 
 // Components
 import { StatCard, ChartCard, TimeViewSelector } from './components/common';
@@ -39,7 +37,6 @@ import { EnvironmentalTab } from './components/tabs/EnvironmentalTab';
 import { BatteryTab } from './components/tabs/BatteryTab';
 import { InsightsTab } from './components/tabs/InsightsTab';
 import { MyCarTab } from './components/tabs/MyCarTab';
-import { UploadModal } from './components/modals/UploadModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
 import { PorscheConnectModal } from './components/modals/PorscheConnectModal';
 import { WelcomeScreen, SettingsPage } from './pages';
@@ -52,8 +49,6 @@ export default function App() {
   const [useSampleData, setUseSampleData] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
   const [showSettings, setShowSettings] = useState(false);
-  const [showUpload, setShowUpload] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState({ start: null, charge: null });
   const [electricityPrice, setElectricityPrice] = useState(0.25);
   const [petrolPrice, setPetrolPrice] = useState(1.80);
   const [petrolConsumption, setPetrolConsumption] = useState(8.0);
@@ -68,7 +63,6 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [vehicleModel, setVehicleModel] = useState(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState(null);
-  const [uploadMode, setUploadMode] = useState('replace'); // 'replace' or 'merge'
   const [rawData, setRawData] = useState({ start: [], charge: [] }); // Raw CSV rows for merging
   const [showPorscheConnect, setShowPorscheConnect] = useState(false); // Porsche Connect modal
   const [autoSyncStatus, setAutoSyncStatus] = useState(null); // 'checking', 'syncing', 'done', 'new_data', null
@@ -1079,162 +1073,6 @@ export default function App() {
     };
   }, [data, unitSystem, units, speedRangeLabels, t]);
 
-  const handleFileUpload = useCallback(async (file, type) => {
-    // Handle Audi ZIP files
-    if (type === 'audi' && file.name.endsWith('.zip')) {
-      try {
-        const zip = await JSZip.loadAsync(file);
-        const files = Object.keys(zip.files);
-
-        // Look for Short-term memory.csv or Long-term memory.csv
-        const shortTermFile = files.find(f => f.toLowerCase().includes('short-term') || f.toLowerCase().includes('short term'));
-        const longTermFile = files.find(f => f.toLowerCase().includes('long-term') || f.toLowerCase().includes('long term'));
-
-        // Prefer short-term (individual trips), fall back to long-term
-        const dataFile = shortTermFile || longTermFile;
-        if (!dataFile) {
-          setModalConfig({ title: 'Error', message: t('upload.audiNoDataFile'), variant: 'danger' });
-          return;
-        }
-
-        const content = await zip.files[dataFile].async('string');
-        const { rows, vin } = parseAudiCSV(content);
-
-        if (rows.length === 0) {
-          setModalConfig({ title: 'Error', message: t('upload.audiParseError'), variant: 'danger' });
-          return;
-        }
-
-        // Reset both start and charge, set start with Audi data
-        setUploadStatus({
-          start: {
-            name: file.name,
-            rows: rows.length,
-            data: rows,
-            model: 'Audi e-tron GT',
-            isAudi: true,
-            vin
-          },
-          charge: null
-        });
-      } catch (err) {
-        setModalConfig({ title: 'Error', message: 'Error parsing ZIP file: ' + err.message, variant: 'danger' });
-      }
-      return;
-    }
-
-    // Handle regular CSV files (Porsche format)
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const text = e.target.result;
-
-        // Check if this is actually an Audi CSV (in case user picked wrong upload area)
-        if (isAudiFormat(text)) {
-          const { rows, vin } = parseAudiCSV(text);
-          if (rows.length > 0) {
-            setUploadStatus({
-              start: {
-                name: file.name,
-                rows: rows.length,
-                data: rows,
-                model: 'Audi e-tron GT',
-                isAudi: true,
-                vin
-              },
-              charge: null
-            });
-            return;
-          }
-        }
-
-        const parsed = parseCSV(text);
-        const model = extractVehicleModel(file.name);
-        setUploadStatus(prev => ({ ...prev, [type]: { name: file.name, rows: parsed.length, data: parsed, model, isAudi: false } }));
-      } catch (err) {
-        setModalConfig({ title: 'Error', message: 'Error parsing file: ' + err.message, variant: 'danger' });
-      }
-    };
-    reader.readAsText(file);
-  }, [t]);
-
-  const processUploadedFiles = useCallback(() => {
-    if (!uploadStatus.start?.data) {
-      setModalConfig({ title: t('upload.missingFile'), message: t('upload.missingFileDesc'), variant: 'danger' });
-      return;
-    }
-
-    let finalStartData = uploadStatus.start.data;
-    let finalChargeData = uploadStatus.charge?.data || [];
-    let mergeStats = null;
-
-    // Handle merge mode
-    if (uploadMode === 'merge') {
-      if (rawData.start.length > 0) {
-        // We have raw data to merge with
-        const startMerge = mergeRawData(rawData.start, uploadStatus.start.data);
-        finalStartData = startMerge.merged;
-        mergeStats = { start: startMerge.stats };
-
-        if (uploadStatus.charge?.data && rawData.charge.length > 0) {
-          const chargeMerge = mergeRawData(rawData.charge, uploadStatus.charge.data);
-          finalChargeData = chargeMerge.merged;
-          mergeStats.charge = chargeMerge.stats;
-        } else if (uploadStatus.charge?.data) {
-          finalChargeData = uploadStatus.charge.data;
-        } else {
-          finalChargeData = rawData.charge;
-        }
-      } else if (appData !== null) {
-        // User has data but no raw data (old backup) - show warning and proceed as replace
-        setModalConfig({
-          title: t('upload.mergeUnavailable'),
-          message: t('upload.mergeUnavailableDesc'),
-          variant: 'warning'
-        });
-        // Still proceed with the upload as replace mode
-      }
-    }
-
-    // Store raw data for future merges
-    const newRawData = { start: finalStartData, charge: finalChargeData };
-    setRawData(newRawData);
-    safeStorage.set(STORAGE_KEYS.RAW_DATA, newRawData);
-
-    // Process and store the computed data
-    const processed = processUploadedData(finalStartData, finalChargeData);
-    setAppData(processed);
-    safeStorage.set(STORAGE_KEYS.DATA, processed);
-
-    const model = uploadStatus.start?.model || uploadStatus.charge?.model || null;
-    if (model) {
-      setVehicleModel(model);
-      safeStorage.set(STORAGE_KEYS.VEHICLE_MODEL, model);
-
-      // Try to auto-detect vehicle from the model name and set battery capacity
-      const guessedVehicle = guessVehicleFromString(model);
-      if (guessedVehicle) {
-        setSelectedVehicleId(guessedVehicle.id);
-        setBatteryCapacity(guessedVehicle.usableBattery);
-      }
-    }
-
-    // Show merge results
-    if (mergeStats) {
-      const newTrips = mergeStats.start.new;
-      const duplicates = mergeStats.start.duplicates;
-      const total = mergeStats.start.total;
-      setModalConfig({
-        title: t('upload.mergeComplete'),
-        message: t('upload.mergeStats', { new: newTrips, duplicates, total }),
-        variant: 'success'
-      });
-    }
-
-    setShowUpload(false);
-    setUploadStatus({ start: null, charge: null });
-    setUploadMode('replace'); // Reset mode
-  }, [uploadStatus, uploadMode, rawData, t]);
 
   const handleBackup = useCallback(() => {
     try {
@@ -1501,19 +1339,6 @@ export default function App() {
       />
 
       {/* Upload Modal */}
-      {showUpload && (
-        <UploadModal
-          darkMode={darkMode}
-          showUpload={showUpload}
-          setShowUpload={setShowUpload}
-          uploadStatus={uploadStatus}
-          handleFileUpload={handleFileUpload}
-          processUploadedFiles={processUploadedFiles}
-          hasExistingData={rawData.start.length > 0 || appData !== null}
-          uploadMode={uploadMode}
-          setUploadMode={setUploadMode}
-        />
-      )}
 
       {/* Modal Dialog */}
       {modalConfig && (
@@ -1573,7 +1398,6 @@ export default function App() {
               setSelectedVehicleId={setSelectedVehicleId}
               pressureUnit={pressureUnit}
               setPressureUnit={setPressureUnit}
-              setShowUpload={setShowUpload}
               setShowPorscheConnect={setShowPorscheConnect}
               handleClearData={handleClearData}
               handleBackup={handleBackup}
@@ -1584,7 +1408,6 @@ export default function App() {
           {/* Welcome Screen (no data) */}
           {!data && !showSettings && (
             <WelcomeScreen
-              setShowUpload={setShowUpload}
               setUseSampleData={setUseSampleData}
               setShowPorscheConnect={setShowPorscheConnect}
               darkMode={darkMode}

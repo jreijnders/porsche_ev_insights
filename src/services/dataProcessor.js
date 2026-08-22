@@ -336,12 +336,3 @@ export function processUploadedData(sinceStartData, sinceChargeData) {
 // Format: "Model Name-<language specific text>-YYYY-MM-DD_HH-MM.csv"
 // Examples: "Taycan 4 Cross Turismo-Since start-2026-01-30_08-45.csv"
 //           "Macan Electric-Desde o arranque-2026-01-29_14-54.csv"
-export function extractVehicleModel(filename) {
-  // Match: Model name (first segment before dash), then anything, then date pattern at end
-  // The model is everything before the first dash that's followed by more content and a date
-  const match = filename.match(/^(.+?)-[^-]+-\d{4}-\d{2}-\d{2}/);
-  if (match) {
-    return match[1].trim();
-  }
-  return null;
-}

@@ -109,15 +109,19 @@ npm run typecheck
 New code is TypeScript. The eight original analytics tabs are still JavaScript and are being
 converted incrementally rather than in one sweep.
 
+## Removed from upstream
+
+- **CSV and ZIP import are gone.** The Porsche Connect API is the only data source. The upload
+  modal, both parsers, the merger and `jszip` were removed; connect the car and the dashboard
+  fills itself.
+- **Audi e-tron GT support is gone with it.** That integration was ZIP-import-only with no API,
+  so it could not survive the change. This is the concrete reason the fork cannot be merged
+  back upstream.
+- **Restoring an old backup still works.** A backup taken while CSV import existed restores
+  normally — the one function that reshapes its trips was kept for exactly that.
+
 ## Still inherited from upstream
 
-Honest inventory of things that exist in the code but are **not** part of this fork's direction:
-
-- **CSV / ZIP import and the upload modal still work.** They are no longer a supported data
-  source — the API is the only one this fork develops against — but the code has not been
-  removed yet.
-- **Audi e-tron GT support** is likewise still present in the vehicle list and the ZIP importer,
-  and will go when CSV import does.
 - **The [wiki](https://github.com/jpleite/porsche_ev_insights/wiki) describes upstream**, not
   this fork. Its deployment and data-import pages do not apply here.
 
