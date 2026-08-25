@@ -17,6 +17,9 @@ import { downloadFile } from './utils/download';
 // i18n
 import { useTranslation } from './i18n';
 
+// Theme
+import { useThemeMode } from './theme';
+
 // Services
 import { processUploadedData } from './services/dataProcessor';
 import { reconstructRawDataFromTrips } from './utils/dataMerger';
@@ -72,35 +75,9 @@ export default function App() {
     return safeStorage.get(STORAGE_KEYS.PORSCHE_CONNECT_VIN) || null;
   }); // Selected VIN for multi-vehicle accounts
   const [pressureUnit, setPressureUnit] = useState('bar'); // Pressure unit: 'bar' or 'psi'
-  // Theme mode: 'light', 'dark', 'auto'
-  const [themeMode, setThemeMode] = useState(() => {
-    const saved = safeStorage.get('taycan_theme_mode');
-    return saved || 'auto';
-  });
-
-  // Compute actual dark mode based on theme mode
-  const darkMode = themeMode === 'auto'
-    ? window.matchMedia('(prefers-color-scheme: dark)').matches
-    : themeMode === 'dark';
-
-  // Listen for system theme changes when in auto mode
-  useEffect(() => {
-    if (themeMode !== 'auto') return;
-
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => {
-      // Force re-render when system theme changes
-      setThemeMode(prev => prev); // This triggers a re-render
-    };
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, [themeMode]);
-
-  // Apply theme to document
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode);
-    safeStorage.set('taycan_theme_mode', themeMode);
-  }, [darkMode, themeMode]);
+  // Theme mode: 'light', 'dark', 'auto'. Shared with the ledger and place book,
+  // which mount instead of App and so never ran this (#30).
+  const { themeMode, setThemeMode, darkMode } = useThemeMode();
 
   useEffect(() => {
     let savedData = safeStorage.get(STORAGE_KEYS.DATA);

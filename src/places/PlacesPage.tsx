@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import LedgerShell, { Card, PillButton } from '../components/layout/LedgerShell';
+
 import NamePlacePanel from './NamePlacePanel';
 import type { ArrivalCluster, Place, PlaceKind } from './types';
 
@@ -132,37 +134,29 @@ export default function PlacesPage() {
     });
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-      <div className="mx-auto max-w-4xl px-4 py-6">
-        <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">Locatieboek</h1>
-          <div className="flex items-center gap-3 text-sm">
-            <a href="/trips" className="text-zinc-500 underline-offset-2 hover:underline">
-              ← ritten
-            </a>
-            <button
-              type="button"
-              onClick={rematch}
-              disabled={busy}
-              className="rounded-lg border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              opnieuw matchen
-            </button>
-          </div>
-        </header>
-
+    <LedgerShell
+      title="Locatieboek"
+      subtitle="De plekken waar ritten tegen gematcht worden"
+      active="/places"
+      actions={
+        <PillButton disabled={busy} onClick={rematch}>
+          opnieuw matchen
+        </PillButton>
+      }
+    >
+      <div className="mx-auto max-w-4xl">
         {error && (
-          <div className="mb-4 rounded-lg border border-amber-400/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
             {error}
           </div>
         )}
         {notice && !error && (
-          <div className="mb-4 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+          <div className="mb-4 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm text-sky-700 dark:text-sky-300">
             {notice}
           </div>
         )}
 
-        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <Card className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {places.map((place) =>
             editing === place.id ? (
               <PlaceEditor
@@ -188,18 +182,20 @@ export default function PlacesPage() {
               rittenoverzicht — dan neemt hij de coördinaat van die rit over.
             </p>
           )}
-        </div>
+        </Card>
 
         {/* Onbenoemde plekken (#30). Empty until the poller has collected
             enough positions for trips to have arrivals that match nothing. */}
         <section className="mt-8">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Onbenoemde plekken</h2>
           {clusters.length === 0 ? (
-            <p className="mt-2 text-sm text-zinc-500">
-              Geen aankomsten zonder locatie — alles wat een positie heeft, heeft een naam.
-            </p>
+            <Card className="mt-2 p-4">
+              <p className="text-sm text-zinc-500">
+                Geen aankomsten zonder locatie — alles wat een positie heeft, heeft een naam.
+              </p>
+            </Card>
           ) : (
-            <div className="mt-2 divide-y divide-zinc-200 dark:divide-zinc-800">
+            <Card className="mt-2 divide-y divide-zinc-200 px-4 dark:divide-zinc-800">
               {clusters.map((cluster, index) => (
                 <div key={`${cluster.lat},${cluster.lon}`} className="py-3">
                   <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -232,22 +228,19 @@ export default function PlacesPage() {
                       onClose={() => setNaming(null)}
                     />
                   ) : (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setNaming(index)}
-                      className="mt-1 rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-                    >
-                      benoemen
-                    </button>
+                    <div className="mt-1">
+                      <PillButton disabled={busy} onClick={() => setNaming(index)}>
+                        benoemen
+                      </PillButton>
+                    </div>
                   )}
                 </div>
               ))}
-            </div>
+            </Card>
           )}
         </section>
       </div>
-    </div>
+    </LedgerShell>
   );
 }
 
@@ -270,19 +263,16 @@ function PlaceRow({
           <span className="text-xs font-normal text-zinc-500">{KIND_LABEL[place.kind]}</span>
         </span>
         <span className="flex items-center gap-2 text-xs">
-          <button
-            type="button"
-            onClick={onEdit}
-            disabled={busy}
-            className="rounded border border-zinc-300 px-2 py-0.5 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-          >
+          <PillButton disabled={busy} onClick={onEdit}>
             bewerken
-          </button>
+          </PillButton>
+          {/* Destructive, so it carries red rather than the neutral border —
+              the delete refusal for a checked trip is the safety net, not this. */}
           <button
             type="button"
             onClick={onDelete}
             disabled={busy}
-            className="rounded border border-zinc-300 px-2 py-0.5 text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-zinc-700 dark:text-red-400 dark:hover:bg-red-950/40"
+            className="rounded-lg border border-red-500/30 px-2.5 py-1 text-xs font-medium text-red-600 transition-all hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
           >
             verwijderen
           </button>
@@ -343,10 +333,10 @@ function PlaceEditor({
   const [radius, setRadius] = useState(String(place.matchRadiusM));
 
   const field =
-    'rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-900';
+    'rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm dark:border-zinc-800 dark:bg-zinc-950';
 
   return (
-    <div className="space-y-2 bg-zinc-100/60 px-3 py-3 dark:bg-zinc-900/60">
+    <div className="space-y-2 bg-sky-500/5 px-3 py-3">
       <div className="flex flex-wrap items-center gap-2">
         <input value={label} onChange={(e) => setLabel(e.target.value)} className={`${field} flex-1`} />
         <select value={kind} onChange={(e) => setKind(e.target.value as PlaceKind)} className={field}>
@@ -374,7 +364,7 @@ function PlaceEditor({
           type="button"
           disabled={busy || label.trim() === '' || Number(radius) <= 0}
           onClick={() => onSave({ label: label.trim(), kind, matchRadiusM: Number(radius) })}
-          className="rounded border border-zinc-300 px-2 py-0.5 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+          className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
         >
           opslaan
         </button>

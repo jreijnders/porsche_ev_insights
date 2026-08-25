@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+/* Tailwind v4's `dark:` follows prefers-color-scheme by default, which would
+   ignore the app's own light/dark/auto setting. Pointing the variant at the
+   `.dark` class on <html> — set by useThemeMode in src/theme.js — makes the
+   two agree. No legacy .jsx uses `dark:`; they branch on a darkMode boolean
+   instead, so this changes nothing outside the rittenregistratie pages. */
+@custom-variant dark (&:where(.dark, .dark *));

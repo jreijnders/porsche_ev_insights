@@ -18,6 +18,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { PillButton } from '../components/layout/LedgerShell';
+
 import { loadPlacesUiKit } from './googleMaps';
 
 export interface NamingCandidate {
@@ -68,7 +70,7 @@ export default function NamePlacePanel({
   const [googleOpen, setGoogleOpen] = useState(false);
 
   return (
-    <div className="mt-2 rounded-lg border border-zinc-300 bg-white p-3 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+    <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="font-medium">
@@ -84,13 +86,7 @@ export default function NamePlacePanel({
             </div>
           )}
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          sluiten
-        </button>
+        <PillButton onClick={onClose}>sluiten</PillButton>
       </div>
 
       {/* Known places first. Half of all unmatched arrivals are a place you
@@ -128,27 +124,21 @@ export default function NamePlacePanel({
                     </span>
                   )
                 ) : (
-                  <button
-                    type="button"
+                  <PillButton
                     disabled={busy}
                     onClick={() => onWiden(c.placeId, c.widenNeedsOverride)}
+                    // The size is the button's headline, and above the ceiling
+                    // it stops looking like an ordinary action (#30).
+                    tone={c.widenNeedsOverride ? 'warn' : 'plain'}
                     title={
                       c.widenNeedsOverride
                         ? `Boven ${evidence.ceilingM} m gaat een locatie de buren opslokken`
                         : undefined
                     }
-                    className={[
-                      'rounded border px-2 py-0.5 text-xs disabled:opacity-50',
-                      // The size is the button's headline, and above the
-                      // ceiling it stops looking like an ordinary action (#30).
-                      c.widenNeedsOverride
-                        ? 'border-amber-400 text-amber-800 hover:bg-amber-50 dark:border-amber-500/50 dark:text-amber-300 dark:hover:bg-amber-950/40'
-                        : 'border-zinc-300 hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800',
-                    ].join(' ')}
                   >
                     {c.widenNeedsOverride ? '⚠ ' : ''}
                     {c.label} oprekken naar {c.widenToM} m
-                  </button>
+                  </PillButton>
                 )}
               </li>
             ))}
@@ -176,12 +166,12 @@ export default function NamePlacePanel({
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder="Naam voor deze locatie"
-            className="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
+            className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
           />
           <select
             value={kind}
             onChange={(e) => setKind(e.target.value as 'home' | 'business' | 'other')}
-            className="rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+            className="rounded-xl border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
           >
             {KINDS.map((k) => (
               <option key={k.value} value={k.value}>
@@ -193,7 +183,7 @@ export default function NamePlacePanel({
             type="button"
             disabled={busy || label.trim() === ''}
             onClick={() => onCreate({ label: label.trim(), kind, googlePlaceId })}
-            className="rounded bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+            className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
           >
             opslaan
           </button>
@@ -314,13 +304,13 @@ function GooglePanel({
   }, [state, at.lat, at.lon, query, onPick]);
 
   return (
-    <div className="rounded border border-zinc-200 p-2 dark:border-zinc-800">
+    <div className="rounded-xl border border-zinc-200 bg-white/60 p-2 dark:border-zinc-800 dark:bg-zinc-950/40">
       <div className="mb-2 flex items-center justify-between gap-2">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="zoek op naam (leeg = in de buurt)"
-          className="min-w-0 flex-1 rounded border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+          className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
         />
         <button type="button" onClick={onClose} className="text-xs text-zinc-500 hover:underline">
           verbergen

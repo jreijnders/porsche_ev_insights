@@ -1,5 +1,6 @@
 import { icons } from '../icons/Icons';
 import { tabs } from '../../constants/tabs';
+import { ledgerNav } from '../../constants/ledgerNav';
 import { useTranslation } from '../../i18n';
 
 export function MobileSidebar({
@@ -73,6 +74,28 @@ export function MobileSidebar({
                 {icons[tab.id]}
                 <span>{t(`tabs.${tab.id}`)}</span>
               </button>
+            ))}
+          </nav>
+
+          {/* Rittenregistratie — separate roots, so links rather than tabs. */}
+          <div className={`my-4 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
+          <p className={`px-3 pb-1 text-xs font-medium uppercase tracking-wide ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+            Rittenregistratie
+          </p>
+          <nav className="space-y-1">
+            {ledgerNav.map(item => (
+              <a
+                key={item.id}
+                href={item.href}
+                className={`w-full px-3 py-2.5 rounded-xl font-medium transition-all flex items-center gap-3 text-sm ${
+                  darkMode
+                    ? 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                    : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
+                }`}
+              >
+                {icons[item.id]}
+                <span>{item.label}</span>
+              </a>
             ))}
           </nav>
 

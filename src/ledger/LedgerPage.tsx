@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import LedgerShell, { Card, PillButton } from '../components/layout/LedgerShell';
 import NamePlacePanel, { type NamingEvidence } from '../places/NamePlacePanel';
 
 import { formatDay, formatDuration, formatKm, formatMonth, formatTime, isCheckable } from './format';
@@ -259,36 +260,33 @@ export default function LedgerPage() {
   }, [summary]);
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100">
-      <div className="mx-auto max-w-4xl px-4 py-6">
-        <header className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">
-            Rittenregistratie{' '}
-            <a href="/places" className="text-sm font-normal text-zinc-500 underline-offset-2 hover:underline">
-              locatieboek →
-            </a>
-          </h1>
-          <select
-            value={month ?? ''}
-            onChange={(e) => { setMonth(e.target.value); setExpanded(null); closeNaming(); }}
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-          >
-            {months.map((m) => (
-              <option key={m.month} value={m.month}>
-                {formatMonth(m.month)} — {m.trips} ritten{m.unchecked > 0 ? ` (${m.unchecked} ongecontroleerd)` : ''}
-              </option>
-            ))}
-          </select>
-        </header>
-
+    <LedgerShell
+      title="Rittenregistratie"
+      subtitle="Zakelijke kilometers per rit"
+      active="/trips"
+      actions={
+        <select
+          value={month ?? ''}
+          onChange={(e) => { setMonth(e.target.value); setExpanded(null); closeNaming(); }}
+          className="rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-sm text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
+        >
+          {months.map((m) => (
+            <option key={m.month} value={m.month}>
+              {formatMonth(m.month)} — {m.trips} ritten{m.unchecked > 0 ? ` (${m.unchecked} ongecontroleerd)` : ''}
+            </option>
+          ))}
+        </select>
+      }
+    >
+      <div className="mx-auto max-w-4xl">
         {error && (
-          <div className="mb-4 rounded-lg border border-amber-400/60 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-200">
+          <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
             {error}
           </div>
         )}
 
         {summary && month && (
-          <div className="sticky top-0 z-10 mb-3 rounded-xl border border-zinc-200 bg-white/95 p-4 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95">
+          <Card className="sticky top-16 z-10 mb-3 bg-white/95 p-4 backdrop-blur dark:bg-zinc-900/95">
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
               <div className="text-sm font-medium">{formatMonth(month)}</div>
               <Metric label="totaal" value={formatKm(summary.totalKm)} />
@@ -312,23 +310,18 @@ export default function LedgerPage() {
               busy={busy}
               onAcknowledge={acknowledgeGap}
             />
-            <div className="mt-2 flex items-center gap-3 text-xs text-zinc-500">
+            <div className="mt-3 flex items-center gap-3 text-xs text-zinc-500">
               <span>{progress}</span>
               {/* The one month-level action. Idempotent, and it never touches a
                   checked trip (#22), so it is safe to press at any time. */}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void rematch()}
-                className="rounded border border-zinc-300 px-2 py-0.5 hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-              >
+              <PillButton disabled={busy} onClick={() => void rematch()}>
                 locaties opnieuw matchen
-              </button>
+              </PillButton>
             </div>
-          </div>
+          </Card>
         )}
 
-        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
+        <Card className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {trips.map((trip, index) => (
             <TripRow
               key={trip.id}
@@ -358,9 +351,9 @@ export default function LedgerPage() {
           {trips.length === 0 && !error && (
             <p className="py-10 text-center text-sm text-zinc-500">Geen ritten in deze maand.</p>
           )}
-        </div>
+        </Card>
       </div>
-    </div>
+    </LedgerShell>
   );
 }
 
@@ -440,14 +433,11 @@ function ReconWindows({
           </span>
           <span className="text-zinc-400">tolerantie {w.toleranceKm} km</span>
           {w.verdict === 'unaccounted' && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => onAcknowledge(w.fromAt, w.toAt, w.differenceKm)}
-              className="rounded border border-zinc-300 px-2 py-0.5 font-sans hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              erken als rit
-            </button>
+            <span className="font-sans">
+              <PillButton disabled={busy} onClick={() => onAcknowledge(w.fromAt, w.toAt, w.differenceKm)}>
+                erken als rit
+              </PillButton>
+            </span>
           )}
           {w.verdict === 'over_logged' && (
             <span className="font-sans text-zinc-500">verwijder de dubbele rit — een handmatige rit maakt dit erger</span>
@@ -469,7 +459,7 @@ function Metric({ label, value, strong }: { label: string; value: string; strong
 
 function Warn({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950/60 dark:text-amber-200">
+    <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
       ⚠ {children}
     </span>
   );
@@ -525,7 +515,7 @@ function TripRow({
     <div
       className={[
         'px-3 py-2.5 transition-colors',
-        expanded ? 'bg-zinc-100/70 dark:bg-zinc-900/60' : '',
+        expanded ? 'bg-sky-500/5 ring-1 ring-inset ring-sky-500/20' : '',
         checked ? 'opacity-70' : '',
       ].join(' ')}
     >
@@ -554,35 +544,32 @@ function TripRow({
           {' → '}
           <Place place={trip.endPlace} confidence={trip.endPlaceConfidence} preTracking={preTracking} />
           {nameable && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onName}
-              className="ml-2 rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              {trip.endPlace === null ? 'locatie noemen' : 'locatie corrigeren'}
-            </button>
+            <span className="ml-2 inline-block align-middle">
+              <PillButton disabled={busy} onClick={onName}>
+                {trip.endPlace === null ? 'locatie noemen' : 'locatie corrigeren'}
+              </PillButton>
+            </span>
           )}
         </span>
         <span className="flex flex-wrap items-center gap-1.5 text-xs">
           {/* Purpose is a label, not a control — it gates nothing since #24/#25.
               Both values toggle off, because null is "unclassified", which is
               an absence rather than a third answer. */}
-          <Toggle on={trip.purpose === 'business'} busy={busy} onClick={() => onPurpose(trip.purpose === 'business' ? null : 'business')}>
+          <PillButton on={trip.purpose === 'business'} disabled={busy} onClick={() => onPurpose(trip.purpose === 'business' ? null : 'business')}>
             zakelijk
-          </Toggle>
-          <Toggle on={trip.purpose === 'private'} busy={busy} onClick={() => onPurpose(trip.purpose === 'private' ? null : 'private')}>
+          </PillButton>
+          <PillButton on={trip.purpose === 'private'} disabled={busy} onClick={() => onPurpose(trip.purpose === 'private' ? null : 'private')}>
             privé
-          </Toggle>
-          <Toggle on={trip.invoiceMonthly} busy={busy} onClick={onInvoice}>
+          </PillButton>
+          <PillButton on={trip.invoiceMonthly} disabled={busy} onClick={onInvoice}>
             factureren
-          </Toggle>
+          </PillButton>
           {/* Checking is per-row and per-click. No select-all: bulk-checking
               would let you mark a month verified without reading it, and the
               checked flag is what lets a kilometre count (#14/#30). */}
-          <Toggle on={checked} busy={busy} onClick={onCheck} title={checked ? `Gecontroleerd ${trip.checkedAt}` : 'Nog niet gecontroleerd'}>
+          <PillButton on={checked} disabled={busy} onClick={onCheck} title={checked ? `Gecontroleerd ${trip.checkedAt}` : 'Nog niet gecontroleerd'}>
             {checked ? '☑ gecontroleerd' : '☐ controleren'}
-          </Toggle>
+          </PillButton>
         </span>
       </div>
 
@@ -626,56 +613,15 @@ function TripRow({
               destructive, it is rare, and #8 made it the escape hatch for
               charging stops rather than an everyday control. */}
           {!first && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onMerge}
-              className="rounded border border-zinc-300 px-2 py-0.5 font-sans hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
-            >
-              samenvoegen met vorige rit
-            </button>
+            <span className="font-sans">
+              <PillButton disabled={busy} onClick={onMerge}>
+                samenvoegen met vorige rit
+              </PillButton>
+            </span>
           )}
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * A control that is on or off, and says which by looking pressed.
- *
- * `aria-pressed` rather than a checkbox: these are toggles on a row, and a
- * screen reader announcing "pressed" is the truth of what they do.
- */
-function Toggle({
-  on,
-  busy,
-  onClick,
-  title,
-  children,
-}: {
-  on: boolean;
-  busy: boolean;
-  onClick: () => void;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      title={title}
-      disabled={busy}
-      onClick={onClick}
-      className={[
-        'rounded px-1.5 py-0.5 transition-colors disabled:opacity-50',
-        on
-          ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
-          : 'text-zinc-500 hover:bg-zinc-200 dark:text-zinc-500 dark:hover:bg-zinc-800',
-      ].join(' ')}
-    >
-      {children}
-    </button>
   );
 }
 
