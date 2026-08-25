@@ -26,7 +26,18 @@ export function formatDuration(minutes: number | null): string {
 }
 
 export function formatKm(km: number): string {
-  return `${km.toLocaleString('nl-NL', { maximumFractionDigits: km % 1 === 0 ? 0 : 1 })} km`;
+  return `${formatKmNumber(km)} km`;
+}
+
+/**
+ * The bare number, for a column whose header already says "km".
+ *
+ * Repeating the unit on every row of a table is noise: it makes each cell a
+ * different width and stops the digits lining up, which is the one thing a
+ * numeric column exists to do.
+ */
+export function formatKmNumber(km: number): string {
+  return km.toLocaleString('nl-NL', { maximumFractionDigits: km % 1 === 0 ? 0 : 1 });
 }
 
 /**

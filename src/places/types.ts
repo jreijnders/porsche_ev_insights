@@ -18,6 +18,8 @@ export interface Place {
   lon: number;
   matchRadiusM: number;
   note: string | null;
+  /** From Nominatim at creation, stored permanently (#5/#30). Null on places made before that. */
+  address: string | null;
   usage: PlaceUsage;
 }
 

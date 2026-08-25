@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import LedgerShell, { Card, PillButton } from '../components/layout/LedgerShell';
 import NamePlacePanel, { type NamingEvidence } from '../places/NamePlacePanel';
 
-import { formatDay, formatDuration, formatKm, formatMonth, formatTime, isCheckable } from './format';
+import { formatDay, formatDuration, formatKm, formatKmNumber, formatMonth, formatTime, isCheckable } from './format';
 import type { LedgerTrip, MonthIndexEntry, MonthPayload, PlaceConfidence, Purpose, Reconciliation } from './types';
 
 const API = '/api/ledger';
@@ -254,9 +254,15 @@ export default function LedgerPage() {
   );
 
   const summary = data?.summary;
+  /** Counted once for the footnote, instead of stamped on every row. */
+  const preTrackingCount = useMemo(() => {
+    const since = data?.positionTrackingSince;
+    if (!since) return 0;
+    return trips.filter((t) => Date.parse(t.endedAt) < Date.parse(since)).length;
+  }, [trips, data?.positionTrackingSince]);
   const progress = useMemo(() => {
     if (!summary) return null;
-    return `${summary.trips - summary.unchecked} of ${summary.trips} checked`;
+    return `${summary.trips - summary.unchecked} van ${summary.trips} gecontroleerd`;
   }, [summary]);
 
   return (
@@ -278,7 +284,7 @@ export default function LedgerPage() {
         </select>
       }
     >
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-6xl">
         {error && (
           <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
             {error}
@@ -321,37 +327,68 @@ export default function LedgerPage() {
           </Card>
         )}
 
-        <Card className="divide-y divide-zinc-200 dark:divide-zinc-800">
-          {trips.map((trip, index) => (
-            <TripRow
-              key={trip.id}
-              trip={trip}
-              expanded={index === expanded}
-              first={index === 0}
-              busy={busy}
-              trackingSince={data?.positionTrackingSince ?? null}
-              onToggle={() => setExpanded((e) => (e === index ? null : index))}
-              onPurpose={(purpose) => void patch(trip, { purpose })}
-              onInvoice={() => void patch(trip, { invoiceMonthly: !trip.invoiceMonthly })}
-              onCheck={() => toggleChecked(trip)}
-              onMerge={() => void mergePrevious(trip)}
-              onName={() => void openNaming(trip)}
-              naming={
-                namingTripId === trip.id
-                  ? {
-                      evidence: naming,
-                      onClose: closeNaming,
-                      onCreate: (input) => void createPlace(trip.id, input),
-                      onWiden: (placeId, override) => void widenForTrip(trip.id, placeId, override),
+        <Card className="overflow-hidden">
+          {/* A real table, so every column lines up down the page. The old
+              flex rows put the date at the left margin, the distance at the
+              right and the controls somewhere in between, which read as three
+              unrelated lists rather than one ledger. */}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
+                  <th className="px-3 py-2 font-medium">Datum</th>
+                  <th className="px-3 py-2 font-medium">Tijd</th>
+                  <th className="px-3 py-2 font-medium">Route</th>
+                  <th className="px-3 py-2 text-right font-medium">Afstand&nbsp;(km)</th>
+                  <th className="px-3 py-2 font-medium">Doel</th>
+                  <th className="px-3 py-2 font-medium">Factuur</th>
+                  <th className="px-3 py-2 font-medium">Controle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trips.map((trip, index) => (
+                  <TripRow
+                    key={trip.id}
+                    trip={trip}
+                    expanded={index === expanded}
+                    first={index === 0}
+                    busy={busy}
+                    trackingSince={data?.positionTrackingSince ?? null}
+                    onToggle={() => setExpanded((e) => (e === index ? null : index))}
+                    onPurpose={(purpose) => void patch(trip, { purpose })}
+                    onInvoice={() => void patch(trip, { invoiceMonthly: !trip.invoiceMonthly })}
+                    onCheck={() => toggleChecked(trip)}
+                    onMerge={() => void mergePrevious(trip)}
+                    onName={() => void openNaming(trip)}
+                    naming={
+                      namingTripId === trip.id
+                        ? {
+                            evidence: naming,
+                            onClose: closeNaming,
+                            onCreate: (input) => void createPlace(trip.id, input),
+                            onWiden: (placeId, override) => void widenForTrip(trip.id, placeId, override),
+                          }
+                        : null
                     }
-                  : null
-              }
-            />
-          ))}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
           {trips.length === 0 && !error && (
             <p className="py-10 text-center text-sm text-zinc-500">Geen ritten in deze maand.</p>
           )}
         </Card>
+
+        {/* Said once, at the foot, rather than repeated on every row. Fourteen
+            identical "van vóór de locatieregistratie" lines drowned out the
+            rows that actually needed attention. */}
+        {preTrackingCount > 0 && (
+          <p className="mt-2 text-xs text-zinc-500">
+            ○ {preTrackingCount} rit{preTrackingCount === 1 ? '' : 'ten'} van vóór de locatieregistratie — daar bestaat
+            geen positie van, dus die locatie noteer je met de hand.
+          </p>
+        )}
       </div>
     </LedgerShell>
   );
@@ -510,128 +547,165 @@ function TripRow({
   // The panel opens on an unmatched arrival AND on a low-confidence one: a
   // wrong place is worse than no place, because it looks settled (#30).
   const nameable = !preTracking && (trip.endPlace === null || trip.endPlaceConfidence === 'low');
+  const cell = 'px-3 py-2 align-middle';
 
   return (
-    <div
-      className={[
-        'px-3 py-2.5 transition-colors',
-        expanded ? 'bg-sky-500/5 ring-1 ring-inset ring-sky-500/20' : '',
-        checked ? 'opacity-70' : '',
-      ].join(' ')}
-    >
-      {/* Line 1 — the journey and the distance. Clicking it expands the row;
-          it is deliberately NOT a control, so a stray click changes nothing. */}
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-baseline justify-between gap-3 text-left font-mono text-sm"
+    <>
+      <tr
+        className={[
+          'border-b border-zinc-100 transition-colors dark:border-zinc-800/70',
+          expanded ? 'bg-sky-500/5' : 'hover:bg-zinc-50 dark:hover:bg-zinc-800/30',
+          checked ? 'text-zinc-400 dark:text-zinc-500' : '',
+        ].join(' ')}
       >
-        <span className="text-zinc-500">
-          {formatDay(trip.startedAt)}{' '}
-          <span className="text-zinc-900 dark:text-zinc-100">
-            {formatTime(trip.startedAt)}
-            {trip.startedAtDerived && <span title="Starttijd berekend — de API levert er geen">~</span>}
-            –{formatTime(trip.endedAt)}
-          </span>
-        </span>
-        <span className="tabular-nums font-medium">{formatKm(trip.distanceKm)}</span>
-      </button>
+        <td className={cell}>
+          {/* The date opens the row. It is the one cell with nothing else to
+              do, so it carries the disclosure rather than an extra column. */}
+          <button
+            type="button"
+            onClick={onToggle}
+            className="whitespace-nowrap font-mono text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+            title={expanded ? 'Details verbergen' : 'Details tonen'}
+          >
+            <span className="mr-1 inline-block w-2 text-zinc-400">{expanded ? '▾' : '▸'}</span>
+            {formatDay(trip.startedAt)}
+          </button>
+        </td>
 
-      {/* Line 2 — places and the controls */}
-      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-        <span className="text-zinc-600 dark:text-zinc-400">
-          <Place place={trip.startPlace} confidence={trip.startPlaceConfidence} preTracking={preTracking} />
-          {' → '}
-          <Place place={trip.endPlace} confidence={trip.endPlaceConfidence} preTracking={preTracking} />
-          {nameable && (
-            <span className="ml-2 inline-block align-middle">
+        <td className={`${cell} whitespace-nowrap font-mono text-xs tabular-nums`}>
+          {formatTime(trip.startedAt)}
+          {trip.startedAtDerived && (
+            <span className="text-zinc-400" title="Starttijd berekend — de API levert er geen">
+              ~
+            </span>
+          )}
+          <span className="text-zinc-400">–</span>
+          {formatTime(trip.endedAt)}
+        </td>
+
+        <td className={cell}>
+          <span className="flex items-center gap-1.5">
+            <Place place={trip.startPlace} confidence={trip.startPlaceConfidence} preTracking={preTracking} />
+            <span className="text-zinc-300 dark:text-zinc-600">→</span>
+            <Place place={trip.endPlace} confidence={trip.endPlaceConfidence} preTracking={preTracking} />
+            {nameable && (
               <PillButton disabled={busy} onClick={onName}>
-                {trip.endPlace === null ? 'locatie noemen' : 'locatie corrigeren'}
+                {trip.endPlace === null ? 'noemen' : 'corrigeren'}
               </PillButton>
-            </span>
-          )}
-        </span>
-        <span className="flex flex-wrap items-center gap-1.5 text-xs">
-          {/* Purpose is a label, not a control — it gates nothing since #24/#25.
-              Both values toggle off, because null is "unclassified", which is
-              an absence rather than a third answer. */}
-          <PillButton on={trip.purpose === 'business'} disabled={busy} onClick={() => onPurpose(trip.purpose === 'business' ? null : 'business')}>
-            zakelijk
-          </PillButton>
-          <PillButton on={trip.purpose === 'private'} disabled={busy} onClick={() => onPurpose(trip.purpose === 'private' ? null : 'private')}>
-            privé
-          </PillButton>
+            )}
+            {provisional && (
+              <span className="text-amber-600 dark:text-amber-400" title="Kan nog een rit opnemen — nog niet te controleren">
+                ●
+              </span>
+            )}
+            {trip.source === 'manual' && (
+              <span className="text-zinc-400" title="Handmatig ingevoerd">
+                ✎
+              </span>
+            )}
+          </span>
+        </td>
+
+        {/* The strongest thing in the row: it is the number that becomes an
+            invoice, and it was reading dimmer than the buttons beside it. */}
+        <td className={`${cell} whitespace-nowrap text-right font-mono font-semibold tabular-nums text-zinc-900 dark:text-zinc-100`}>
+          {formatKmNumber(trip.distanceKm)}
+        </td>
+
+        {/* Purpose is a label, not a control — it gates nothing since #24/#25.
+            Both values toggle off, because null is "unclassified", which is an
+            absence rather than a third answer. */}
+        <td className={cell}>
+          <span className="flex gap-1">
+            <PillButton
+              on={trip.purpose === 'business'}
+              disabled={busy}
+              title="Zakelijk"
+              onClick={() => onPurpose(trip.purpose === 'business' ? null : 'business')}
+            >
+              zakelijk
+            </PillButton>
+            <PillButton
+              on={trip.purpose === 'private'}
+              disabled={busy}
+              title="Privé"
+              onClick={() => onPurpose(trip.purpose === 'private' ? null : 'private')}
+            >
+              privé
+            </PillButton>
+          </span>
+        </td>
+
+        <td className={cell}>
           <PillButton on={trip.invoiceMonthly} disabled={busy} onClick={onInvoice}>
-            factureren
+            {trip.invoiceMonthly ? 'ja' : 'nee'}
           </PillButton>
-          {/* Checking is per-row and per-click. No select-all: bulk-checking
-              would let you mark a month verified without reading it, and the
-              checked flag is what lets a kilometre count (#14/#30). */}
-          <PillButton on={checked} disabled={busy} onClick={onCheck} title={checked ? `Gecontroleerd ${trip.checkedAt}` : 'Nog niet gecontroleerd'}>
-            {checked ? '☑ gecontroleerd' : '☐ controleren'}
-          </PillButton>
-        </span>
-      </div>
+        </td>
 
-      {/* Uncertainty, inline and visible */}
-      {(provisional || trip.source === 'manual' || preTracking) && (
-        <div className="mt-1 text-xs text-zinc-500">
-          {provisional && <span title="Kan nog een rit opnemen">● voorlopig — nog niet te controleren</span>}
-          {trip.source === 'manual' && <span className="ml-3">✎ handmatig ingevoerd</span>}
-          {preTracking && (
-            <span className="ml-3" title="Er werd nog geen positie vastgelegd toen deze rit plaatsvond">
-              ○ van vóór de locatieregistratie — noteer de locatie handmatig
-            </span>
-          )}
-        </div>
+        {/* Checking is per-row and per-click. No select-all: bulk-checking
+            would let you mark a month verified without reading it, and the
+            checked flag is what lets a kilometre count (#14/#30). */}
+        <td className={cell}>
+          <PillButton
+            on={checked}
+            disabled={busy}
+            onClick={onCheck}
+            title={checked ? `Gecontroleerd ${trip.checkedAt}` : 'Nog niet gecontroleerd'}
+          >
+            {checked ? '☑' : '☐'}
+          </PillButton>
+        </td>
+      </tr>
+
+      {naming && (
+        <tr className="border-b border-zinc-100 bg-sky-500/5 dark:border-zinc-800/70">
+          <td colSpan={7} className="px-3 pb-3">
+            {naming.evidence ? (
+              <NamePlacePanel
+                evidence={naming.evidence}
+                busy={busy}
+                onCreate={naming.onCreate}
+                onWiden={naming.onWiden}
+                onClose={naming.onClose}
+              />
+            ) : (
+              <p className="pt-2 text-xs text-zinc-500">Locatiegegevens laden…</p>
+            )}
+          </td>
+        </tr>
       )}
-
-      {naming &&
-        (naming.evidence ? (
-          <NamePlacePanel
-            evidence={naming.evidence}
-            busy={busy}
-            onCreate={naming.onCreate}
-            onWiden={naming.onWiden}
-            onClose={naming.onClose}
-          />
-        ) : (
-          <p className="mt-2 text-xs text-zinc-500">Locatiegegevens laden…</p>
-        ))}
 
       {expanded && (
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-zinc-500">
-          {trip.avgConsumptionKwh100km !== null && <span>{trip.avgConsumptionKwh100km} kWh/100km</span>}
-          {trip.avgSpeedKmh !== null && <span>{trip.avgSpeedKmh} km/u</span>}
-          <span>{formatDuration(trip.drivingMinutes)} rijtijd</span>
-          {trip.endFixDeltaMinutes !== null && (
-            <span title="Tijd tussen aankomst en de positiemeting waarop de locatie berust">
-              fix +{trip.endFixDeltaMinutes} min
-            </span>
-          )}
-          {/* Merge lives behind the expander rather than on the row: it is
-              destructive, it is rare, and #8 made it the escape hatch for
-              charging stops rather than an everyday control. */}
-          {!first && (
-            <span className="font-sans">
-              <PillButton disabled={busy} onClick={onMerge}>
-                samenvoegen met vorige rit
-              </PillButton>
-            </span>
-          )}
-        </div>
+        <tr className="border-b border-zinc-100 bg-sky-500/5 dark:border-zinc-800/70">
+          <td colSpan={7} className="px-3 pb-3">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-zinc-500">
+              {trip.avgConsumptionKwh100km !== null && <span>{trip.avgConsumptionKwh100km} kWh/100km</span>}
+              {trip.avgSpeedKmh !== null && <span>{trip.avgSpeedKmh} km/u</span>}
+              <span>{formatDuration(trip.drivingMinutes)} rijtijd</span>
+              {trip.endFixDeltaMinutes !== null && (
+                <span title="Tijd tussen aankomst en de positiemeting waarop de locatie berust">
+                  fix +{trip.endFixDeltaMinutes} min
+                </span>
+              )}
+              {preTracking && <span title="Er werd nog geen positie vastgelegd">○ vóór de locatieregistratie</span>}
+              {/* Merge lives behind the expander rather than in a column: it is
+                  destructive, it is rare, and #8 made it the escape hatch for
+                  charging stops rather than an everyday control. */}
+              {!first && (
+                <span className="font-sans">
+                  <PillButton disabled={busy} onClick={onMerge}>
+                    samenvoegen met vorige rit
+                  </PillButton>
+                </span>
+              )}
+            </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </>
   );
 }
 
-/**
- * A place, with its uncertainty attached rather than hidden.
- *
- * The three "no place" cases are deliberately NOT one symbol: a trip from
- * before tracking, a trip that matched nothing, and a trip never matched are
- * different problems with different fixes.
- */
 function Place({
   place,
   confidence,
