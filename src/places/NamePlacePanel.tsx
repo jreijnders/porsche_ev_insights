@@ -33,10 +33,32 @@ export interface NamingCandidate {
   widenNeedsOverride: boolean;
 }
 
+/** A place as offered by manual mode's picker — the whole book, unfiltered. */
+export interface BookPlace {
+  id: number;
+  label: string;
+  kind: 'home' | 'business' | 'other';
+  address: string | null;
+  lat: number;
+  lon: number;
+}
+
 export interface NamingEvidence {
-  at: { lat: number; lon: number };
+  /**
+   * 'fix' — the trip has an arrival coordinate, so geometry decides and the
+   * panel offers nearby places and widening.
+   *
+   * 'manual' — the trip predates position tracking (#22), so there is no
+   * coordinate and never will be. Nothing to widen towards and nothing nearby;
+   * you either point at a place you have or name one by address. Matching
+   * skips these trips entirely, so the answer sticks.
+   */
+  mode?: 'fix' | 'manual';
+  at: { lat: number; lon: number } | null;
   address: string | null;
   candidates: NamingCandidate[];
+  /** Manual mode only. */
+  places?: BookPlace[];
   currentPlaceId?: number | null;
   ceilingM: number;
 }
@@ -46,8 +68,17 @@ export interface NamePlacePanelProps {
   busy: boolean;
   /** Create a place here. `googlePlaceId` is null unless one was picked. */
   onCreate: (input: { label: string; kind: 'home' | 'business' | 'other'; googlePlaceId: string | null }) => void;
-  /** Widen an existing place to reach this fix. */
+  /** Widen an existing place to reach this fix. Fix mode only. */
   onWiden: (placeId: number, override: boolean) => void;
+  /** Manual mode: point the trip at a place that already exists. */
+  onAttach?: (placeId: number) => void;
+  /** Manual mode: create a place at the geocoded address and point the trip at it. */
+  onCreateAt?: (input: {
+    label: string;
+    kind: 'home' | 'business' | 'other';
+    query: string;
+    googlePlaceId: string | null;
+  }) => void;
   onClose: () => void;
 }
 
@@ -62,8 +93,22 @@ export default function NamePlacePanel({
   busy,
   onCreate,
   onWiden,
+  onAttach,
+  onCreateAt,
   onClose,
 }: NamePlacePanelProps) {
+  if (evidence.mode === 'manual') {
+    return (
+      <ManualPanel
+        evidence={evidence}
+        busy={busy}
+        onAttach={onAttach}
+        onCreateAt={onCreateAt}
+        onClose={onClose}
+      />
+    );
+  }
+
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState<'home' | 'business' | 'other'>('business');
   const [googlePlaceId, setGooglePlaceId] = useState<string | null>(null);
@@ -76,11 +121,11 @@ export default function NamePlacePanel({
           <div className="font-medium">
             {evidence.address ?? (
               <span className="font-mono text-zinc-500">
-                {evidence.at.lat.toFixed(5)}, {evidence.at.lon.toFixed(5)}
+                {evidence.at?.lat.toFixed(5)}, {evidence.at?.lon.toFixed(5)}
               </span>
             )}
           </div>
-          {evidence.address && (
+          {evidence.address && evidence.at && (
             <div className="font-mono text-xs text-zinc-500">
               {evidence.at.lat.toFixed(5)}, {evidence.at.lon.toFixed(5)}
             </div>
@@ -202,7 +247,7 @@ export default function NamePlacePanel({
       <div className="mt-3">
         {googleOpen ? (
           <GooglePanel
-            at={evidence.at}
+            at={evidence.at ?? { lat: 0, lon: 0 }}
             onPick={(id) => setGooglePlaceId(id)}
             picked={googlePlaceId}
             onClose={() => setGoogleOpen(false)}
@@ -326,6 +371,223 @@ function GooglePanel({
       )}
       <div ref={host} className={state === 'ready' ? 'max-h-64 overflow-y-auto' : 'hidden'} />
       {picked && <p className="mt-1 text-xs text-zinc-500">Gekozen id: <span className="font-mono">{picked}</span></p>}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------ manual mode (#30) */
+
+/**
+ * Naming a trip that predates position tracking.
+ *
+ * These trips have no coordinate and never will: the car was not reporting
+ * position when they happened. The rest of the panel is built on geometry —
+ * nearest place, distance, widen-to-reach — and none of it applies, so this is
+ * a different screen rather than the same one with the numbers blanked out.
+ *
+ * Two answers, in the order you will usually want them:
+ *   1. a place you already have — no new geometry, nothing to get wrong
+ *   2. a new place, geocoded from an address you type
+ *
+ * Both stick. plan.ts skips pre-tracking trips before it emits any update, so
+ * unlike a hand-picked place on a matchable trip, a re-match cannot undo this.
+ */
+function ManualPanel({
+  evidence,
+  busy,
+  onAttach,
+  onCreateAt,
+  onClose,
+}: {
+  evidence: NamingEvidence;
+  busy: boolean;
+  onAttach?: (placeId: number) => void;
+  onCreateAt?: (input: {
+    label: string;
+    kind: 'home' | 'business' | 'other';
+    query: string;
+    googlePlaceId: string | null;
+  }) => void;
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState('');
+  const [label, setLabel] = useState('');
+  const [kind, setKind] = useState<'home' | 'business' | 'other'>('business');
+  const [query, setQuery] = useState('');
+  const [hits, setHits] = useState<{ address: string; lat: number; lon: number }[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [googlePlaceId, setGooglePlaceId] = useState<string | null>(null);
+  const [googleOpen, setGoogleOpen] = useState(false);
+
+  const book = evidence.places ?? [];
+  const needle = filter.trim().toLowerCase();
+  const shown = needle === ''
+    ? book
+    : book.filter(
+        (p) => p.label.toLowerCase().includes(needle) || (p.address ?? '').toLowerCase().includes(needle),
+      );
+
+  const search = async () => {
+    if (query.trim() === '') return;
+    setSearching(true);
+    try {
+      const response = await fetch(`/api/places/geocode?q=${encodeURIComponent(query.trim())}`);
+      const body = (await response.json()) as { hits: { address: string; lat: number; lon: number }[] };
+      setHits(body.hits);
+    } catch {
+      // Naming must survive the geocoder being unreachable, so an empty result
+      // and a failed request look the same on screen: no hits, type again.
+      setHits([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-medium">Locatie handmatig instellen</div>
+          <p className="text-xs text-zinc-500">
+            Deze rit is van vóór de locatieregistratie — er is geen positie vastgelegd, dus je zegt zelf waar hij
+            eindigde. Dat blijft staan: het matchen laat deze ritten met rust.
+          </p>
+        </div>
+        <PillButton onClick={onClose}>sluiten</PillButton>
+      </div>
+
+      {/* 1. A place you already have. */}
+      <div className="mt-3">
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Bestaande locatie kiezen</div>
+        {book.length === 0 ? (
+          <p className="mt-1 text-xs text-zinc-500">Het locatieboek is nog leeg — maak er hieronder een aan.</p>
+        ) : (
+          <>
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="filter op naam of adres"
+              className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+            />
+            <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto">
+              {shown.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="font-medium">{p.label}</span>
+                    {p.address && <span className="ml-2 text-xs text-zinc-500">{p.address}</span>}
+                  </span>
+                  <PillButton
+                    on={p.id === evidence.currentPlaceId}
+                    disabled={busy || !onAttach}
+                    onClick={() => onAttach?.(p.id)}
+                  >
+                    {p.id === evidence.currentPlaceId ? 'huidige' : 'kiezen'}
+                  </PillButton>
+                </li>
+              ))}
+              {shown.length === 0 && <li className="text-xs text-zinc-500">Niets gevonden.</li>}
+            </ul>
+          </>
+        )}
+      </div>
+
+      {/* 2. A new place, from an address. */}
+      <div className="mt-3 border-t border-zinc-200/60 pt-3 dark:border-zinc-800/60">
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Nieuwe locatie op adres</div>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void search();
+            }}
+            placeholder="adres of plaats, bv. Giessenweg 5 Rotterdam"
+            className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
+          />
+          <PillButton disabled={busy || searching || query.trim() === ''} onClick={() => void search()}>
+            {searching ? 'zoeken…' : 'zoek adres'}
+          </PillButton>
+        </div>
+
+        {hits !== null && (
+          <ul className="mt-1 space-y-0.5 text-xs">
+            {hits.map((hit) => (
+              <li key={`${hit.lat},${hit.lon}`}>
+                <button
+                  type="button"
+                  onClick={() => setQuery(hit.address)}
+                  className="text-left text-zinc-600 underline-offset-2 hover:underline dark:text-zinc-400"
+                >
+                  {hit.address}
+                </button>
+              </li>
+            ))}
+            {hits.length === 0 && !searching && <li className="text-zinc-500">Geen adres gevonden.</li>}
+          </ul>
+        )}
+
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Naam voor deze locatie"
+            className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
+          />
+          <select
+            value={kind}
+            onChange={(e) => setKind(e.target.value as 'home' | 'business' | 'other')}
+            className="rounded-xl border border-zinc-200 bg-white px-2 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            {KINDS.map((k) => (
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={busy || !onCreateAt || label.trim() === '' || query.trim() === ''}
+            onClick={() => onCreateAt?.({ label: label.trim(), kind, query: query.trim(), googlePlaceId })}
+            className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
+          >
+            aanmaken
+          </button>
+        </div>
+        {googlePlaceId && (
+          <p className="mt-1 text-xs text-zinc-500">
+            Google-locatie gekoppeld (id bewaard, naam niet — die typ je zelf).{' '}
+            <button type="button" onClick={() => setGooglePlaceId(null)} className="underline underline-offset-2">
+              loskoppelen
+            </button>
+          </p>
+        )}
+        <p className="mt-1 text-xs text-zinc-500">
+          De coördinaat komt van OpenStreetMap, niet van de auto — dus hij wijst naar het adres, niet naar de plek waar
+          je precies geparkeerd stond. Voor toekomstige ritten kun je de straal in het locatieboek bijstellen.
+        </p>
+      </div>
+
+      {/* Google, for finding the business by name rather than by address. */}
+      <div className="mt-3">
+        {googleOpen ? (
+          <GooglePanel
+            // No coordinate to search around, so the text search carries this
+            // panel; the bias below just keeps Dutch results above foreign ones.
+            at={{ lat: 52.1, lon: 5.3 }}
+            onPick={(id) => setGooglePlaceId(id)}
+            picked={googlePlaceId}
+            onClose={() => setGoogleOpen(false)}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setGoogleOpen(true)}
+            className="text-xs text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-200"
+          >
+            zoek op bedrijfsnaam (Google)
+          </button>
+        )}
+      </div>
     </div>
   );
 }

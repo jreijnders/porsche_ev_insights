@@ -20,14 +20,15 @@ import { db } from '../db/client.js';
 import { haversineMeters, selectArrivalFix, type MatchablePlace, type TimedFix } from '../places/match.js';
 import {
   clusterArrivals,
+  isPreTrackingWindow,
   judgeWiden,
   nearbyCandidates,
   WIDEN_MARGIN_M,
   WIDEN_WARNING_M,
   type ArrivalPoint,
 } from '../places/naming.js';
-import { reverseGeocode } from '../places/nominatim.js';
-import { DEFAULT_MATCH_CONFIG, placeUsage, rematchVehicle } from '../places/service.js';
+import { reverseGeocode, searchPlaces } from '../places/nominatim.js';
+import { DEFAULT_MATCH_CONFIG, firstFixAt, placeUsage, rematchVehicle } from '../places/service.js';
 
 type PlaceKind = 'home' | 'business' | 'other';
 
@@ -82,6 +83,11 @@ function validate(body: PlaceBody, requireAll: boolean): string | null {
 const fixTime = sql`coalesce(${sample.eventAt}, ${sample.observedAt})`;
 const atOrAfter = (t: Date) => sql`${fixTime} >= ${t.toISOString()}::timestamptz`;
 const atOrBefore = (t: Date) => sql`${fixTime} <= ${t.toISOString()}::timestamptz`;
+
+/** The pre-tracking rule, shared with the planner so the two cannot drift. */
+async function isPreTracking(endedAt: Date, vin: string): Promise<boolean> {
+  return isPreTrackingWindow(endedAt, await firstFixAt(vin), DEFAULT_MATCH_CONFIG.toleranceMinutes);
+}
 
 async function onlyVin(): Promise<string | null> {
   const rows = await db.select({ vin: trip.vin }).from(trip).limit(1);
@@ -404,14 +410,34 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       .orderBy(sql`${fixTime} asc`)
       .limit(1);
 
-    // Pre-tracking trips have no coordinate, so there is nothing to name and
-    // nothing to show. The ledger renders them as "—" (#22) and never opens
-    // the panel; this is the server saying the same thing.
+    // No fix means no coordinate, so none of the geometry below applies. That
+    // is not a dead end: the trip still went somewhere, and you still know
+    // where. The panel switches to manual mode — pick a place you already
+    // have, or name one by address — and the answer STICKS, because plan.ts
+    // skips pre-tracking trips entirely rather than re-deriving them. That is
+    // what makes this safe where the ambiguity hand-pick was not.
     if (!fix) {
-      return reply.status(409).send({
-        error: 'Geen positiegegevens rond deze rit — er is geen coördinaat om te benoemen.',
-        preTracking: true,
-      });
+      const rows = await db.select().from(place).orderBy(asc(place.label));
+      return {
+        tripId,
+        mode: 'manual' as const,
+        at: null,
+        address: null,
+        candidates: [],
+        // The whole book: with no coordinate there is no "nearby", so the
+        // shortlist has to be everything and the filtering is yours.
+        places: rows.map((p) => ({
+          id: p.id,
+          label: p.label,
+          kind: p.kind,
+          address: p.address,
+          lat: Number(p.lat),
+          lon: Number(p.lon),
+        })),
+        currentPlaceId: row.endPlaceId,
+        currentConfidence: row.endPlaceConfidence,
+        ceilingM: WIDEN_WARNING_M,
+      };
     }
 
     const at = { lat: Number(fix.lat), lon: Number(fix.lon) };
@@ -437,9 +463,11 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     return {
       tripId,
+      mode: 'fix' as const,
       at,
       address: address?.address ?? null,
       candidates,
+      places: [],
       /** Which candidate, if any, the trip currently names — the "~" case. */
       currentPlaceId: row.endPlaceId,
       currentConfidence: row.endPlaceConfidence,
@@ -569,6 +597,142 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     return reply.status(201).send({
       place: { ...created, lat: Number(created.lat), lon: Number(created.lon) },
       tripsInCluster: points.length,
+    });
+  });
+
+  /* ------------------------------------ manual placement, pre-tracking (#30) */
+
+  /**
+   * Forward geocoding, for naming a place you have no coordinate for.
+   *
+   * A thin pass-through so the browser never talks to Nominatim directly: one
+   * User-Agent, one rate limiter, one place to change if the policy does.
+   */
+  app.get<{ Querystring: { q?: string } }>('/geocode', async (request) => {
+    return { hits: await searchPlaces(request.query?.q ?? '') };
+  });
+
+  /**
+   * The guard both manual endpoints share.
+   *
+   * Manual placement is only allowed on a trip matching CANNOT place — one
+   * with no arrival fix. On any other trip the planner owns `end_place_id` and
+   * would overwrite a hand-set value at the next re-match (#29), which is a
+   * control that silently undoes itself. Refusing is the honest answer;
+   * offering it and losing it quietly is not.
+   *
+   * Returns a verdict rather than sending the reply, so the refusal reason and
+   * its status live next to each other and the caller stays readable.
+   */
+  type Verdict = { ok: true } | { ok: false; status: number; error: string };
+
+  async function manualTarget(tripId: number): Promise<Verdict> {
+    const [row] = await db.select().from(trip).where(eq(trip.id, tripId));
+    if (!row) return { ok: false, status: 404, error: 'No such trip' };
+
+    if (row.checkedAt !== null) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'Deze rit is gecontroleerd — haal het vinkje eraf voordat je de locatie wijzigt.',
+      };
+    }
+    if (!(await isPreTracking(row.endedAt, row.vin))) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          'Deze rit heeft wél positiegegevens, dus het matchen bepaalt de locatie — een handmatige keuze zou bij de volgende match verdwijnen. Pas de straal van de locatie aan.',
+      };
+    }
+    return { ok: true };
+  }
+
+  /** Point a pre-tracking trip at a place you already have. No new geometry. */
+  app.post<{ Params: { id: string }; Body: { placeId?: number } }>('/attach/:id', async (request, reply) => {
+    const tripId = Number(request.params.id);
+    if (!Number.isInteger(tripId)) return reply.status(400).send({ error: 'Bad trip id' });
+
+    const placeId = request.body?.placeId;
+    if (!Number.isInteger(placeId)) return reply.status(400).send({ error: 'placeId is required' });
+
+    const verdict = await manualTarget(tripId);
+    if (!verdict.ok) return reply.status(verdict.status).send({ error: verdict.error });
+
+    const [exists] = await db.select({ id: place.id }).from(place).where(eq(place.id, placeId!));
+    if (!exists) return reply.status(404).send({ error: 'No such place' });
+
+    await db
+      .update(trip)
+      .set({
+        endPlaceId: placeId!,
+        // 'high' because a human said so, which outranks any geometry. The
+        // column's other values describe what MATCHING concluded; this row was
+        // never matched and never will be.
+        endPlaceConfidence: 'high',
+        updatedAt: new Date(),
+      })
+      // Re-checked in the WHERE: a row checked between the guard and the write
+      // must lose, the same belt-and-braces service.ts uses.
+      .where(and(eq(trip.id, tripId), isNull(trip.checkedAt)));
+
+    return { ok: true, placeId };
+  });
+
+  /**
+   * Create a place at a geocoded coordinate and point a pre-tracking trip at it.
+   *
+   * The coordinate comes from OUR geocode call, re-run here rather than taken
+   * from the browser — the same reason widen recomputes its distance. A
+   * coordinate decides what matches later, so it must not be settable from a
+   * stale screen.
+   */
+  type FromAddress = { Params: { id: string }; Body: PlaceBody & { query?: string } };
+  app.post<FromAddress>('/from-address/:id', async (request, reply) => {
+    const tripId = Number(request.params.id);
+    if (!Number.isInteger(tripId)) return reply.status(400).send({ error: 'Bad trip id' });
+
+    const body = request.body ?? {};
+    if (!body.label || body.label.trim() === '') return reply.status(400).send({ error: 'label is required' });
+    if (!body.kind || !KINDS.includes(body.kind)) return reply.status(400).send({ error: 'kind is required' });
+    if (!body.query || body.query.trim() === '') return reply.status(400).send({ error: 'query is required' });
+
+    const verdict = await manualTarget(tripId);
+    if (!verdict.ok) return reply.status(verdict.status).send({ error: verdict.error });
+
+    const [hit] = await searchPlaces(body.query, 1);
+    if (!hit) {
+      return reply.status(409).send({ error: `Geen adres gevonden voor "${body.query}".` });
+    }
+
+    const [created] = await db
+      .insert(place)
+      .values({
+        label: body.label.trim(),
+        kind: body.kind,
+        lat: coord(hit.lat),
+        lon: coord(hit.lon),
+        matchRadiusM: body.matchRadiusM ?? 100,
+        note: body.note ?? null,
+        googlePlaceId: body.googlePlaceId ?? null,
+        address: hit.address,
+        addressSource: 'nominatim',
+      })
+      .returning();
+    if (!created) return reply.status(500).send({ error: 'Insert returned no row' });
+
+    await db
+      .update(trip)
+      .set({ endPlaceId: created.id, endPlaceConfidence: 'high', updatedAt: new Date() })
+      .where(and(eq(trip.id, tripId), isNull(trip.checkedAt)));
+
+    // A place created here is a real place: later trips that actually drive
+    // there should match it, so the book re-matches like any other change.
+    await rematchAfterChange();
+
+    return reply.status(201).send({
+      place: { ...created, lat: Number(created.lat), lon: Number(created.lon) },
+      geocodedTo: hit,
     });
   });
 

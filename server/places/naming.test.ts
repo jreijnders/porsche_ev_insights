@@ -5,6 +5,7 @@ import {
   CANDIDATE_RADIUS_M,
   CLUSTER_RADIUS_M,
   clusterArrivals,
+  isPreTrackingWindow,
   judgeWiden,
   nearbyCandidates,
   WIDEN_MARGIN_M,
@@ -140,5 +141,39 @@ describe('clusterArrivals', () => {
   it('reports spread, so a cluster over a whole car park is visible as one', () => {
     const [cluster] = clusterArrivals([arrival(1, 0, 0), arrival(2, 60, 10)]);
     expect(cluster?.spreadM).toBe(30);
+  });
+});
+
+describe('isPreTrackingWindow', () => {
+  const TOLERANCE = 60;
+  const at = (h: number) => new Date(Date.UTC(2026, 7, 20, h));
+
+  it('is true when no position has ever been recorded', () => {
+    expect(isPreTrackingWindow(at(12), null, TOLERANCE)).toBe(true);
+  });
+
+  it('does NOT brand the first trip after tracking begins', () => {
+    // The bug #22 found live: that trip's own arrival fix usually IS the
+    // earliest fix, so a naive `endedAt < earliestFix` test excludes the only
+    // placeable trip in the ledger — permanently, and without saying so.
+    const endedAt = at(12);
+    const itsOwnArrivalFix = new Date(endedAt.getTime() + 2 * 60_000);
+    expect(isPreTrackingWindow(endedAt, itsOwnArrivalFix, TOLERANCE)).toBe(false);
+    // The naive form would have said true, which is the whole point.
+    expect(endedAt.getTime() < itsOwnArrivalFix.getTime()).toBe(true);
+  });
+
+  it('is true only once the whole arrival window closed before the first fix', () => {
+    const endedAt = at(12);
+    const justInside = new Date(endedAt.getTime() + (TOLERANCE - 1) * 60_000);
+    const justOutside = new Date(endedAt.getTime() + (TOLERANCE + 1) * 60_000);
+    expect(isPreTrackingWindow(endedAt, justInside, TOLERANCE)).toBe(false);
+    expect(isPreTrackingWindow(endedAt, justOutside, TOLERANCE)).toBe(true);
+  });
+
+  it('accepts a timestamp or a Date, because the two callers hold different ones', () => {
+    const endedAt = at(12);
+    const fix = at(20);
+    expect(isPreTrackingWindow(endedAt, fix, TOLERANCE)).toBe(isPreTrackingWindow(endedAt, fix.getTime(), TOLERANCE));
   });
 });

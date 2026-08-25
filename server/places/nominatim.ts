@@ -19,6 +19,7 @@
  */
 
 const ENDPOINT = 'https://nominatim.openstreetmap.org/reverse';
+const SEARCH_ENDPOINT = 'https://nominatim.openstreetmap.org/search';
 
 /** The policy asks for one request a second. Enforced by a serialised queue. */
 const MIN_GAP_MS = 1_100;
@@ -135,4 +136,63 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ReverseR
 export function clearReverseCache(): void {
   cache.clear();
   nextSlot = 0;
+}
+
+/* ----------------------------------------------------------- forward search */
+
+export interface GeocodeHit {
+  address: string;
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Text to coordinates, for trips that predate position tracking (#30).
+ *
+ * Those trips have no fix, so there is no coordinate to name — the only way to
+ * give one a destination is to say where it was. Nominatim is the right source
+ * for that and not just the convenient one: OSMF permits permanent storage, so
+ * the coordinate this returns may become a durable place. Google's may not —
+ * its lat/lng caching allowance is 30 days (#5), which is no basis for a
+ * coordinate that has to keep matching trips for years.
+ *
+ * Restricted to the countries the car is actually driven in, so "Marnixstraat"
+ * does not return a street in Jakarta above the one in Haarlem.
+ */
+export async function searchPlaces(query: string, limit = 6): Promise<GeocodeHit[]> {
+  const q = query.trim();
+  if (q === '') return [];
+
+  await takeSlot();
+
+  const url =
+    `${SEARCH_ENDPOINT}?format=jsonv2&addressdetails=1&limit=${limit}` +
+    `&countrycodes=nl,be,de,fr,lu&q=${encodeURIComponent(q)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, 'Accept-Language': 'nl' },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!response.ok) return [];
+    const body = (await response.json()) as {
+      lat: string;
+      lon: string;
+      display_name?: string;
+      address?: NominatimAddress;
+    }[];
+
+    return body
+      .map((hit) => ({
+        // Our own composed line where the structured fields allow it, falling
+        // back to display_name: a search hit may be a whole city, which has no
+        // road or house number to compose from.
+        address: (hit.address ? formatAddress(hit.address) : null) ?? hit.display_name ?? '',
+        lat: Number(hit.lat),
+        lon: Number(hit.lon),
+      }))
+      .filter((hit) => hit.address !== '' && Number.isFinite(hit.lat) && Number.isFinite(hit.lon));
+  } catch {
+    return [];
+  }
 }

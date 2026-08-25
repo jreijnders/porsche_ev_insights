@@ -161,6 +161,56 @@ export default function LedgerPage() {
     [month, load, closeNaming],
   );
 
+  /** Manual mode: point a pre-tracking trip at a place that already exists. */
+  const attachPlace = useCallback(
+    async (tripId: number, placeId: number) => {
+      setBusy(true);
+      try {
+        await json(`${PLACES}/attach/${tripId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ placeId }),
+        });
+        closeNaming();
+        if (month) await load(month);
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [month, load, closeNaming],
+  );
+
+  /** Manual mode: create a place at a geocoded address and attach it. */
+  const createPlaceAt = useCallback(
+    async (
+      tripId: number,
+      input: { label: string; kind: string; query: string; googlePlaceId: string | null },
+    ) => {
+      setBusy(true);
+      try {
+        const result = await json<{ geocodedTo: { address: string } }>(`${PLACES}/from-address/${tripId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        // Say where it actually landed. The geocoder may have resolved the
+        // typed text to something other than what was meant, and finding that
+        // out later — from a trip matched to the wrong place — is worse.
+        setError(`"${input.label}" aangemaakt op ${result.geocodedTo.address}.`);
+        closeNaming();
+        if (month) await load(month);
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [month, load, closeNaming],
+  );
+
   /**
    * Accept-and-widen. The server recomputes the distance and judges the size.
    *
@@ -367,6 +417,8 @@ export default function LedgerPage() {
                             onClose: closeNaming,
                             onCreate: (input) => void createPlace(trip.id, input),
                             onWiden: (placeId, override) => void widenForTrip(trip.id, placeId, override),
+                            onAttach: (placeId) => void attachPlace(trip.id, placeId),
+                            onCreateAt: (input) => void createPlaceAt(trip.id, input),
                           }
                         : null
                     }
@@ -386,7 +438,7 @@ export default function LedgerPage() {
         {preTrackingCount > 0 && (
           <p className="mt-2 text-xs text-zinc-500">
             ○ {preTrackingCount} rit{preTrackingCount === 1 ? '' : 'ten'} van vóór de locatieregistratie — daar bestaat
-            geen positie van, dus die locatie noteer je met de hand.
+            geen positie van, dus stel je de locatie zelf in met “noemen”. Die keuze blijft staan.
           </p>
         )}
       </div>
@@ -521,6 +573,13 @@ interface TripRowProps {
     onClose: () => void;
     onCreate: (input: { label: string; kind: 'home' | 'business' | 'other'; googlePlaceId: string | null }) => void;
     onWiden: (placeId: number, override: boolean) => void;
+    onAttach: (placeId: number) => void;
+    onCreateAt: (input: {
+      label: string;
+      kind: 'home' | 'business' | 'other';
+      query: string;
+      googlePlaceId: string | null;
+    }) => void;
   } | null;
 }
 
@@ -546,7 +605,9 @@ function TripRow({
     trackingSince !== null && Date.parse(trip.endedAt) < Date.parse(trackingSince);
   // The panel opens on an unmatched arrival AND on a low-confidence one: a
   // wrong place is worse than no place, because it looks settled (#30).
-  const nameable = !preTracking && (trip.endPlace === null || trip.endPlaceConfidence === 'low');
+  // Pre-tracking trips are nameable too now (#30): they have no coordinate, so
+  // the panel opens in manual mode instead of refusing.
+  const nameable = trip.endPlace === null || trip.endPlaceConfidence === 'low' || preTracking;
   const cell = 'px-3 py-2 align-middle';
 
   return (
@@ -666,6 +727,8 @@ function TripRow({
                 busy={busy}
                 onCreate={naming.onCreate}
                 onWiden={naming.onWiden}
+                onAttach={naming.onAttach}
+                onCreateAt={naming.onCreateAt}
                 onClose={naming.onClose}
               />
             ) : (

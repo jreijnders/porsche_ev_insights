@@ -193,3 +193,31 @@ export function clusterArrivals(
     }))
     .sort((a, b) => b.tripIds.length - a.tripIds.length || b.latestAt.getTime() - a.latestAt.getTime());
 }
+
+/* ------------------------------------------------------- pre-tracking rule */
+
+/**
+ * Whether a trip happened before position tracking existed, so geometry can
+ * never place it (#22) and manual placement is the only answer (#30).
+ *
+ * The test is on the trip's whole arrival WINDOW, not its end time. The naive
+ * form (`endedAt < earliestFix`) is wrong in a way that hides: the first trip
+ * after tracking begins is usually the trip whose own arrival fix IS the
+ * earliest fix, so it would be branded "before position tracking" and never
+ * matched again — permanently and silently. #22 found that live, on the only
+ * placeable trip in the ledger at the time.
+ *
+ * Lives here because two callers need it and they must not drift: the planner
+ * decides whether to skip a trip, and the manual-placement route decides
+ * whether to allow a hand-set place. If those two ever disagree, one of them
+ * offers a control the other silently undoes.
+ */
+export function isPreTrackingWindow(
+  endedAt: Date,
+  earliestFixAt: Date | number | null,
+  toleranceMinutes: number,
+): boolean {
+  if (earliestFixAt === null) return true;
+  const earliest = typeof earliestFixAt === 'number' ? earliestFixAt : earliestFixAt.getTime();
+  return endedAt.getTime() + toleranceMinutes * 60_000 < earliest;
+}

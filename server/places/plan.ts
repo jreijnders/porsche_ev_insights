@@ -9,6 +9,7 @@
  * next door.
  */
 
+import { isPreTrackingWindow } from './naming.js';
 import {
   chainIsContinuous,
   matchPlace,
@@ -140,15 +141,9 @@ export function planRematch(input: PlanInput): RematchPlan {
   let previous: { trip: TripForMatch; endPlaceId: number | null; endConfidence: Confidence | null } | null = null;
 
   for (const trip of trips) {
-    // Pre-tracking means the trip's ENTIRE arrival window closed before the
-    // first fix was ever recorded — not merely that the trip ended before it.
-    //
-    // The naive test (endedAt < earliestFix) is wrong in a way that hides: the
-    // first trip after tracking begins is usually the trip whose own arrival
-    // fix IS the earliest fix, so it would be branded "before position
-    // tracking" and never matched again, permanently and silently.
-    const arrivalWindowCloses = trip.endedAt.getTime() + toleranceMinutes * 60_000;
-    const isPreTracking = earliestFixAt === null || arrivalWindowCloses < earliestFixAt;
+    // The rule lives in naming.ts because the manual-placement route needs the
+    // same answer; see isPreTrackingWindow for why it is a window, not a time.
+    const isPreTracking = isPreTrackingWindow(trip.endedAt, earliestFixAt, toleranceMinutes);
 
     if (trip.checkedAt !== null) {
       skippedCheckedTripIds.push(trip.id);
