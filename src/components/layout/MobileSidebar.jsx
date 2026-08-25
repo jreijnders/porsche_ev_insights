@@ -77,10 +77,10 @@ export function MobileSidebar({
             ))}
           </nav>
 
-          {/* Rittenregistratie — separate roots, so links rather than tabs. */}
+          {/* Mileage log — separate roots, so links rather than tabs. */}
           <div className={`my-4 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
           <p className={`px-3 pb-1 text-xs font-medium uppercase tracking-wide ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-            Rittenregistratie
+            Mileage log
           </p>
           <nav className="space-y-1">
             {ledgerNav.map(item => (

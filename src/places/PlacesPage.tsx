@@ -5,7 +5,7 @@
  * this screen talks to Google, and the whole thing works with the network to
  * the outside world unplugged.
  *
- * The naming flow lives here too (#30), as "onbenoemde plekken": arrivals that
+ * The naming flow lives here too (#30), as "unnamed spots": arrivals that
  * matched nothing, grouped into spots. The ledger asks "where did THIS trip
  * end?"; this asks "which spots do I keep going to without a name?" — same
  * evidence, different cut, and naming one spot places every trip in it.
@@ -35,9 +35,9 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 
 const KINDS: PlaceKind[] = ['home', 'business', 'other'];
 const KIND_LABEL: Record<PlaceKind, string> = {
-  home: 'thuis',
-  business: 'zakelijk',
-  other: 'overig',
+  home: 'home',
+  business: 'business',
+  other: 'other',
 };
 
 export default function PlacesPage() {
@@ -99,14 +99,14 @@ export default function PlacesPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(patch),
         }),
-      'Opgeslagen — ritten opnieuw gematcht.',
+      'Saved — trips re-matched.',
     ).then(() => setEditing(null));
 
   const remove = (place: Place) => {
-    if (!window.confirm(`"${place.label}" verwijderen?`)) return;
+    if (!window.confirm(`Delete "${place.label}"?`)) return;
     // The 409 for a checked trip is surfaced, not swallowed: refusing to
     // rewrite verified history is the point, so the reason has to be readable.
-    void mutate(() => json(`${API}/${place.id}`, { method: 'DELETE' }), 'Locatie verwijderd.');
+    void mutate(() => json(`${API}/${place.id}`, { method: 'DELETE' }), 'Place deleted.');
   };
 
   const nameCluster = (
@@ -119,7 +119,7 @@ export default function PlacesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...input, tripIds: cluster.tripIds }),
       });
-      setNotice(`"${input.label}" aangemaakt — ${tripsInCluster} rit(ten) gematcht.`);
+      setNotice(`"${input.label}" created — ${tripsInCluster} trip(s) matched.`);
       setNaming(null);
     });
 
@@ -129,18 +129,18 @@ export default function PlacesPage() {
         summary: { placed: number; ambiguous: number; unmatched: number; preTracking: number };
       }>(`${API}/rematch`, { method: 'POST' });
       setNotice(
-        `${summary.placed} geplaatst · ${summary.ambiguous} twijfelachtig · ${summary.unmatched} zonder locatie · ${summary.preTracking} van vóór de locatieregistratie.`,
+        `${summary.placed} placed · ${summary.ambiguous} ambiguous · ${summary.unmatched} unplaced · ${summary.preTracking} from before position tracking.`,
       );
     });
 
   return (
     <LedgerShell
-      title="Locatieboek"
-      subtitle="De plekken waar ritten tegen gematcht worden"
+      title="Place book"
+      subtitle="The places trips are matched against"
       active="/places"
       actions={
         <PillButton disabled={busy} onClick={rematch}>
-          opnieuw matchen
+          re-match
         </PillButton>
       }
     >
@@ -156,15 +156,15 @@ export default function PlacesPage() {
           </div>
         )}
 
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Locaties</h2>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Places</h2>
 
         {/* No table at all when there is nothing in it. A header row over zero
             rows advertises columns of data that do not exist. */}
         {places.length === 0 && !error ? (
           <Card className="p-4">
             <p className="text-sm text-zinc-500">
-              Nog geen locaties. Noem er een hieronder bij een onbenoemde plek, of vanuit een rit in het
-              rittenoverzicht — dan neemt hij de coördinaat van die rit over.
+              No places yet. Name one below from an unnamed spot, or from a trip in the ledger — that way it takes
+              the coordinate from the trip itself.
             </p>
           </Card>
         ) : (
@@ -173,12 +173,12 @@ export default function PlacesPage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
-                  <th className="px-3 py-2 font-medium">Locatie</th>
-                  <th className="px-3 py-2 font-medium">Soort</th>
-                  <th className="px-3 py-2 text-right font-medium">Straal</th>
-                  <th className="px-3 py-2 font-medium">In werkelijkheid</th>
-                  <th className="px-3 py-2 text-right font-medium">Ritten</th>
-                  <th className="px-3 py-2 font-medium">Coördinaat</th>
+                  <th className="px-3 py-2 font-medium">Place</th>
+                  <th className="px-3 py-2 font-medium">Kind</th>
+                  <th className="px-3 py-2 text-right font-medium">Radius</th>
+                  <th className="px-3 py-2 font-medium">In practice</th>
+                  <th className="px-3 py-2 text-right font-medium">Trips</th>
+                  <th className="px-3 py-2 font-medium">Coordinate</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -208,14 +208,14 @@ export default function PlacesPage() {
         </Card>
         )}
 
-        {/* Onbenoemde plekken (#30). Empty until the poller has collected
+        {/* Unnamed spots (#30). Empty until the poller has collected
             enough positions for trips to have arrivals that match nothing. */}
         <section className="mt-8">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Onbenoemde plekken</h2>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-zinc-500">Unnamed spots</h2>
           {clusters.length === 0 ? (
             <Card className="p-4">
               <p className="text-sm text-zinc-500">
-                Geen aankomsten zonder locatie — alles wat een positie heeft, heeft een naam.
+                No arrivals without a place — everything with a position has a name.
               </p>
             </Card>
           ) : (
@@ -224,10 +224,10 @@ export default function PlacesPage() {
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-zinc-200 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
-                      <th className="px-3 py-2 font-medium">Adres</th>
-                      <th className="px-3 py-2 text-right font-medium">Ritten</th>
-                      <th className="px-3 py-2 text-right font-medium">Spreiding</th>
-                      <th className="px-3 py-2 font-medium">Laatst</th>
+                      <th className="px-3 py-2 font-medium">Address</th>
+                      <th className="px-3 py-2 text-right font-medium">Trips</th>
+                      <th className="px-3 py-2 text-right font-medium">Spread</th>
+                      <th className="px-3 py-2 font-medium">Last</th>
                       <th className="px-3 py-2" />
                     </tr>
                   </thead>
@@ -249,11 +249,11 @@ export default function PlacesPage() {
                             {cluster.spreadM} m
                           </td>
                           <td className="px-3 py-2 font-mono text-xs tabular-nums text-zinc-500">
-                            {new Date(cluster.latestAt).toLocaleDateString('nl-NL')}
+                            {new Date(cluster.latestAt).toLocaleDateString('en-GB')}
                           </td>
                           <td className="px-3 py-2 text-right">
                             <PillButton disabled={busy} onClick={() => setNaming(index)}>
-                              benoemen
+                              name it
                             </PillButton>
                           </td>
                         </tr>
@@ -328,7 +328,7 @@ function PlaceRow({
       <td className="px-3 py-2">
         <span className="flex items-center justify-end gap-2">
           <PillButton disabled={busy} onClick={onEdit}>
-            bewerken
+            edit
           </PillButton>
           {/* Destructive, so it carries red rather than the neutral border —
               the delete refusal for a checked trip is the safety net, not this. */}
@@ -338,7 +338,7 @@ function PlaceRow({
             disabled={busy}
             className="rounded-lg border border-red-500/30 px-2.5 py-1 text-xs font-medium text-red-600 transition-all hover:bg-red-500/10 disabled:opacity-40 dark:text-red-400"
           >
-            verwijderen
+            delete
           </button>
         </span>
       </td>
@@ -353,7 +353,7 @@ function PlaceRow({
 function RadiusReality({ place }: { place: Place }) {
   const { nearestMatchM, farthestMatchM } = place.usage;
   if (farthestMatchM === null || nearestMatchM === null) {
-    return <span className="text-zinc-400">nog geen gemeten match</span>;
+    return <span className="text-zinc-400">no measured match yet</span>;
   }
 
   const headroom = place.matchRadiusM - farthestMatchM;
@@ -362,9 +362,9 @@ function RadiusReality({ place }: { place: Place }) {
 
   return (
     <span className={tight ? 'text-amber-700 dark:text-amber-400' : undefined}>
-      matches op {nearestMatchM}–{farthestMatchM} m
-      {tight && ' · krap, één slechte parkeerplek van missen'}
-      {loose && ' · ruim; kan strakker'}
+      matches at {nearestMatchM}–{farthestMatchM} m
+      {tight && ' · tight — one bad parking spot from missing'}
+      {loose && ' · roomy; could be tighter'}
     </span>
   );
 }
@@ -400,7 +400,7 @@ function PlaceEditor({
           ))}
         </select>
         <label className="flex items-center gap-1 text-xs text-zinc-500">
-          straal
+          radius
           <input
             type="number"
             min={1}
@@ -419,13 +419,13 @@ function PlaceEditor({
           onClick={() => onSave({ label: label.trim(), kind, matchRadiusM: Number(radius) })}
           className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
         >
-          opslaan
+          save
         </button>
         <button type="button" onClick={onCancel} className="text-zinc-500 hover:underline">
-          annuleren
+          cancel
         </button>
         <span className="text-zinc-400">
-          Coördinaat wijzigen kan alleen via de API — er is nog geen kaartkiezer.
+          The coordinate can only be changed through the API — there is no map picker yet.
         </span>
       </div>
       </td>

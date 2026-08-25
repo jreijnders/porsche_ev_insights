@@ -1,7 +1,13 @@
 /** Formatting helpers. Pure, so they are testable — see format.test.ts. */
 
-const DAY = new Intl.DateTimeFormat('nl-NL', { day: '2-digit', month: 'short', timeZone: 'Europe/Amsterdam' });
-const TIME = new Intl.DateTimeFormat('nl-NL', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Amsterdam' });
+/**
+ * en-GB throughout, not en-US: this ledger records European driving, so dates
+ * are day-first and the clock is 24-hour. A 12-hour clock would turn a 00:23
+ * departure into "12:23 am", which is exactly the kind of ambiguity a record
+ * you might have to defend should not contain.
+ */
+const DAY = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', timeZone: 'Europe/Amsterdam' });
+const TIME = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Amsterdam' });
 
 export function formatDay(iso: string): string {
   return DAY.format(new Date(iso));
@@ -14,15 +20,15 @@ export function formatTime(iso: string): string {
 export function formatMonth(month: string): string {
   const [year, m] = month.split('-');
   const date = new Date(Date.UTC(Number(year), Number(m) - 1, 1));
-  return new Intl.DateTimeFormat('nl-NL', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date);
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
 
-/** 175 -> "2u 55m". Driving time is reference data, so keep it compact. */
+/** 175 -> "2h 55m". Driving time is reference data, so keep it compact. */
 export function formatDuration(minutes: number | null): string {
   if (minutes === null) return '–';
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  return h === 0 ? `${m}m` : `${h}u ${m}m`;
+  return h === 0 ? `${m}m` : `${h}h ${m}m`;
 }
 
 export function formatKm(km: number): string {
@@ -37,7 +43,7 @@ export function formatKm(km: number): string {
  * numeric column exists to do.
  */
 export function formatKmNumber(km: number): string {
-  return km.toLocaleString('nl-NL', { maximumFractionDigits: km % 1 === 0 ? 0 : 1 });
+  return km.toLocaleString('en-GB', { maximumFractionDigits: km % 1 === 0 ? 0 : 1 });
 }
 
 /**

@@ -27,8 +27,8 @@ function Mark() {
 
 const NAV = [
   { href: '/', label: 'Dashboard' },
-  { href: '/trips', label: 'Ritten' },
-  { href: '/places', label: 'Locaties' },
+  { href: '/trips', label: 'Trips' },
+  { href: '/places', label: 'Places' },
 ];
 
 export default function LedgerShell({

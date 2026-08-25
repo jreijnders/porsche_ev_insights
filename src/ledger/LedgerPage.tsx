@@ -199,7 +199,7 @@ export default function LedgerPage() {
         // Say where it actually landed. The geocoder may have resolved the
         // typed text to something other than what was meant, and finding that
         // out later — from a trip matched to the wrong place — is worse.
-        setError(`"${input.label}" aangemaakt op ${result.geocodedTo.address}.`);
+        setError(`"${input.label}" created at ${result.geocodedTo.address}.`);
         closeNaming();
         if (month) await load(month);
       } catch (e) {
@@ -231,7 +231,7 @@ export default function LedgerPage() {
           },
         );
         setError(
-          `${result.place?.label ?? 'Locatie'} opgerekt van ${result.widenedFrom} naar ${result.widenedTo} m (fix lag op ${result.fixDistanceM} m).`,
+          `${result.place?.label ?? 'Place'} widened from ${result.widenedFrom} to ${result.widenedTo} m (the fix was ${result.fixDistanceM} m away).`,
         );
         closeNaming();
         if (month) await load(month);
@@ -274,7 +274,7 @@ export default function LedgerPage() {
         { method: 'POST' },
       );
       setError(
-        `Opnieuw gematcht: ${summary.placed} geplaatst, ${summary.ambiguous} twijfelachtig, ${summary.unmatched} zonder locatie, ${summary.preTracking} van vóór de locatieregistratie.`,
+        `Re-matched: ${summary.placed} placed, ${summary.ambiguous} ambiguous, ${summary.unmatched} unplaced, ${summary.preTracking} from before position tracking.`,
       );
       if (month) await load(month);
     } catch (e) {
@@ -295,7 +295,7 @@ export default function LedgerPage() {
   const toggleChecked = useCallback(
     (trip: LedgerTrip) => {
       if (!isCheckable(trip.status)) {
-        setError('Een voorlopige rit kan niet gecontroleerd worden — er kan nog een traject bij komen.');
+        setError('A provisional trip cannot be checked — it may still absorb another leg.');
         return;
       }
       void patch(trip, { checked: trip.checkedAt === null });
@@ -312,13 +312,13 @@ export default function LedgerPage() {
   }, [trips, data?.positionTrackingSince]);
   const progress = useMemo(() => {
     if (!summary) return null;
-    return `${summary.trips - summary.unchecked} van ${summary.trips} gecontroleerd`;
+    return `${summary.trips - summary.unchecked} of ${summary.trips} checked`;
   }, [summary]);
 
   return (
     <LedgerShell
-      title="Rittenregistratie"
-      subtitle="Zakelijke kilometers per rit"
+      title="Mileage log"
+      subtitle="Business kilometres, trip by trip"
       active="/trips"
       actions={
         <select
@@ -328,7 +328,7 @@ export default function LedgerPage() {
         >
           {months.map((m) => (
             <option key={m.month} value={m.month}>
-              {formatMonth(m.month)} — {m.trips} ritten{m.unchecked > 0 ? ` (${m.unchecked} ongecontroleerd)` : ''}
+              {formatMonth(m.month)} — {m.trips} trips{m.unchecked > 0 ? ` (${m.unchecked} unchecked)` : ''}
             </option>
           ))}
         </select>
@@ -345,20 +345,19 @@ export default function LedgerPage() {
           <Card className="sticky top-16 z-10 mb-3 bg-white/95 p-4 backdrop-blur dark:bg-zinc-900/95">
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
               <div className="text-sm font-medium">{formatMonth(month)}</div>
-              <Metric label="totaal" value={formatKm(summary.totalKm)} />
-              <Metric label="te factureren" value={formatKm(summary.invoiceableKm)} strong />
+              <Metric label="total" value={formatKm(summary.totalKm)} />
+              <Metric label="invoiceable" value={formatKm(summary.invoiceableKm)} strong />
               {summary.uncheckedFlagged > 0 && (
                 <Warn>
-                  {summary.uncheckedFlagged} gemarkeerd maar ongecontroleerd — {summary.uncheckedFlaggedKm} km niet
-                  meegeteld
+                  {summary.uncheckedFlagged} flagged but unchecked — {summary.uncheckedFlaggedKm} km not counted
                 </Warn>
               )}
               {summary.unchecked > summary.uncheckedFlagged && (
                 <span className="text-xs text-zinc-500">
-                  {summary.unchecked - summary.uncheckedFlagged} overig ongecontroleerd
+                  {summary.unchecked - summary.uncheckedFlagged} others unchecked
                 </span>
               )}
-              {summary.unplaced > 0 && <Warn>{summary.unplaced} zonder locatie</Warn>}
+              {summary.unplaced > 0 && <Warn>{summary.unplaced} without a place</Warn>}
               <ReconBadge recon={data?.reconciliation ?? null} readings={summary.odometerReadings} />
             </div>
             <ReconWindows
@@ -371,7 +370,7 @@ export default function LedgerPage() {
               {/* The one month-level action. Idempotent, and it never touches a
                   checked trip (#22), so it is safe to press at any time. */}
               <PillButton disabled={busy} onClick={() => void rematch()}>
-                locaties opnieuw matchen
+                re-match places
               </PillButton>
             </div>
           </Card>
@@ -386,13 +385,13 @@ export default function LedgerPage() {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs font-medium uppercase tracking-wide text-zinc-500 dark:border-zinc-800">
-                  <th className="px-3 py-2 font-medium">Datum</th>
-                  <th className="px-3 py-2 font-medium">Tijd</th>
+                  <th className="px-3 py-2 font-medium">Date</th>
+                  <th className="px-3 py-2 font-medium">Time</th>
                   <th className="px-3 py-2 font-medium">Route</th>
-                  <th className="px-3 py-2 text-right font-medium">Afstand&nbsp;(km)</th>
-                  <th className="px-3 py-2 font-medium">Doel</th>
-                  <th className="px-3 py-2 font-medium">Factuur</th>
-                  <th className="px-3 py-2 font-medium">Controle</th>
+                  <th className="px-3 py-2 text-right font-medium">Distance&nbsp;(km)</th>
+                  <th className="px-3 py-2 font-medium">Purpose</th>
+                  <th className="px-3 py-2 font-medium">Invoice</th>
+                  <th className="px-3 py-2 font-medium">Checked</th>
                 </tr>
               </thead>
               <tbody>
@@ -428,17 +427,18 @@ export default function LedgerPage() {
             </table>
           </div>
           {trips.length === 0 && !error && (
-            <p className="py-10 text-center text-sm text-zinc-500">Geen ritten in deze maand.</p>
+            <p className="py-10 text-center text-sm text-zinc-500">No trips this month.</p>
           )}
         </Card>
 
         {/* Said once, at the foot, rather than repeated on every row. Fourteen
-            identical "van vóór de locatieregistratie" lines drowned out the
+            identical "before position tracking" lines drowned out the
             rows that actually needed attention. */}
         {preTrackingCount > 0 && (
           <p className="mt-2 text-xs text-zinc-500">
-            ○ {preTrackingCount} rit{preTrackingCount === 1 ? '' : 'ten'} van vóór de locatieregistratie — daar bestaat
-            geen positie van, dus stel je de locatie zelf in met “noemen”. Die keuze blijft staan.
+            ○ {preTrackingCount} trip{preTrackingCount === 1 ? '' : 's'} from before position tracking — no position
+            was ever recorded for {preTrackingCount === 1 ? 'it' : 'them'}, so you set the place yourself with
+            “name”. That choice sticks.
           </p>
         )}
       </div>
@@ -457,8 +457,8 @@ export default function LedgerPage() {
 function ReconBadge({ recon, readings }: { recon: Reconciliation | null; readings: number }) {
   if (!recon || recon.status === 'not_reconcilable') {
     return (
-      <span className="text-xs text-zinc-500" title="Zonder twee tellerstanden valt er niets te controleren">
-        niet controleerbaar ({readings} tellerstanden)
+      <span className="text-xs text-zinc-500" title="Nothing can be reconciled without two odometer readings">
+        not reconcilable ({readings} odometer readings)
       </span>
     );
   }
@@ -467,26 +467,26 @@ function ReconBadge({ recon, readings }: { recon: Reconciliation | null; reading
     case 'over_logged':
       return (
         <Warn>
-          {recon.overLoggedKm} km te veel geboekt — zit al in het factuurtotaal
-          {recon.unaccountedKm > 0 && ` · ${recon.unaccountedKm} km niet verantwoord`}
+          {recon.overLoggedKm} km over-logged — already inside the invoice total
+          {recon.unaccountedKm > 0 && ` · ${recon.unaccountedKm} km unaccounted`}
         </Warn>
       );
     case 'unaccounted':
-      return <Warn>{recon.unaccountedKm} km niet verantwoord — mogelijk een ontbrekende rit</Warn>;
+      return <Warn>{recon.unaccountedKm} km unaccounted — possibly a missing trip</Warn>;
     case 'settling':
       return (
-        <span className="text-xs text-zinc-500" title="Nog geen latere rit die bewijst dat de historie voorbij dit venster is">
-          nog niet te beoordelen ({recon.settlingCount} venster{recon.settlingCount === 1 ? '' : 's'})
+        <span className="text-xs text-zinc-500" title="No later trip yet proving history has moved past this window">
+          not yet judgeable ({recon.settlingCount} window{recon.settlingCount === 1 ? '' : 's'})
         </span>
       );
     case 'partial':
       return (
         <span className="text-xs text-zinc-500">
-          deels gedekt — tellerstanden vanaf {recon.coverageFrom ? formatDay(recon.coverageFrom) : '?'}
+          partly covered — odometer readings from {recon.coverageFrom ? formatDay(recon.coverageFrom) : '?'}
         </span>
       );
     default:
-      return <span className="text-xs text-emerald-700 dark:text-emerald-400">✓ sluitend</span>;
+      return <span className="text-xs text-emerald-700 dark:text-emerald-400">✓ reconciled</span>;
   }
 }
 
@@ -515,21 +515,21 @@ function ReconWindows({
             {formatDay(w.fromAt)}–{formatDay(w.toAt)}
           </span>
           <span className="tabular-nums">
-            teller {w.odometerDeltaKm} km · geboekt {w.loggedKm} km ({w.tripCount} ritten)
+            odometer {w.odometerDeltaKm} km · logged {w.loggedKm} km ({w.tripCount} trip{w.tripCount === 1 ? '' : 's'})
           </span>
           <span className={w.verdict === 'over_logged' ? 'font-semibold text-red-700 dark:text-red-400' : 'font-semibold text-amber-700 dark:text-amber-400'}>
             {w.differenceKm > 0 ? `+${w.differenceKm}` : w.differenceKm} km
           </span>
-          <span className="text-zinc-400">tolerantie {w.toleranceKm} km</span>
+          <span className="text-zinc-400">tolerance {w.toleranceKm} km</span>
           {w.verdict === 'unaccounted' && (
             <span className="font-sans">
               <PillButton disabled={busy} onClick={() => onAcknowledge(w.fromAt, w.toAt, w.differenceKm)}>
-                erken als rit
+                acknowledge as a trip
               </PillButton>
             </span>
           )}
           {w.verdict === 'over_logged' && (
-            <span className="font-sans text-zinc-500">verwijder de dubbele rit — een handmatige rit maakt dit erger</span>
+            <span className="font-sans text-zinc-500">delete the duplicate trip — a manual trip makes this worse</span>
           )}
         </div>
       ))}
@@ -626,7 +626,7 @@ function TripRow({
             type="button"
             onClick={onToggle}
             className="whitespace-nowrap font-mono text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-            title={expanded ? 'Details verbergen' : 'Details tonen'}
+            title={expanded ? 'Hide details' : 'Show details'}
           >
             <span className="mr-1 inline-block w-2 text-zinc-400">{expanded ? '▾' : '▸'}</span>
             {formatDay(trip.startedAt)}
@@ -636,7 +636,7 @@ function TripRow({
         <td className={`${cell} whitespace-nowrap font-mono text-xs tabular-nums`}>
           {formatTime(trip.startedAt)}
           {trip.startedAtDerived && (
-            <span className="text-zinc-400" title="Starttijd berekend — de API levert er geen">
+            <span className="text-zinc-400" title="Start time derived — the API provides none">
               ~
             </span>
           )}
@@ -651,16 +651,16 @@ function TripRow({
             <Place place={trip.endPlace} confidence={trip.endPlaceConfidence} preTracking={preTracking} />
             {nameable && (
               <PillButton disabled={busy} onClick={onName}>
-                {trip.endPlace === null ? 'noemen' : 'corrigeren'}
+                {trip.endPlace === null ? 'name' : 'correct'}
               </PillButton>
             )}
             {provisional && (
-              <span className="text-amber-600 dark:text-amber-400" title="Kan nog een rit opnemen — nog niet te controleren">
+              <span className="text-amber-600 dark:text-amber-400" title="May still absorb another leg — not yet checkable">
                 ●
               </span>
             )}
             {trip.source === 'manual' && (
-              <span className="text-zinc-400" title="Handmatig ingevoerd">
+              <span className="text-zinc-400" title="Entered by hand">
                 ✎
               </span>
             )}
@@ -681,25 +681,25 @@ function TripRow({
             <PillButton
               on={trip.purpose === 'business'}
               disabled={busy}
-              title="Zakelijk"
+              title="Business"
               onClick={() => onPurpose(trip.purpose === 'business' ? null : 'business')}
             >
-              zakelijk
+              business
             </PillButton>
             <PillButton
               on={trip.purpose === 'private'}
               disabled={busy}
-              title="Privé"
+              title="Private"
               onClick={() => onPurpose(trip.purpose === 'private' ? null : 'private')}
             >
-              privé
+              private
             </PillButton>
           </span>
         </td>
 
         <td className={cell}>
           <PillButton on={trip.invoiceMonthly} disabled={busy} onClick={onInvoice}>
-            {trip.invoiceMonthly ? 'ja' : 'nee'}
+            {trip.invoiceMonthly ? 'yes' : 'no'}
           </PillButton>
         </td>
 
@@ -711,7 +711,7 @@ function TripRow({
             on={checked}
             disabled={busy}
             onClick={onCheck}
-            title={checked ? `Gecontroleerd ${trip.checkedAt}` : 'Nog niet gecontroleerd'}
+            title={checked ? `Checked ${trip.checkedAt}` : 'Not yet checked'}
           >
             {checked ? '☑' : '☐'}
           </PillButton>
@@ -732,7 +732,7 @@ function TripRow({
                 onClose={naming.onClose}
               />
             ) : (
-              <p className="pt-2 text-xs text-zinc-500">Locatiegegevens laden…</p>
+              <p className="pt-2 text-xs text-zinc-500">Loading place data…</p>
             )}
           </td>
         </tr>
@@ -744,20 +744,20 @@ function TripRow({
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-zinc-500">
               {trip.avgConsumptionKwh100km !== null && <span>{trip.avgConsumptionKwh100km} kWh/100km</span>}
               {trip.avgSpeedKmh !== null && <span>{trip.avgSpeedKmh} km/u</span>}
-              <span>{formatDuration(trip.drivingMinutes)} rijtijd</span>
+              <span>{formatDuration(trip.drivingMinutes)} driving</span>
               {trip.endFixDeltaMinutes !== null && (
-                <span title="Tijd tussen aankomst en de positiemeting waarop de locatie berust">
+                <span title="Time between arrival and the position fix the place rests on">
                   fix +{trip.endFixDeltaMinutes} min
                 </span>
               )}
-              {preTracking && <span title="Er werd nog geen positie vastgelegd">○ vóór de locatieregistratie</span>}
+              {preTracking && <span title="No position was being recorded yet">○ before position tracking</span>}
               {/* Merge lives behind the expander rather than in a column: it is
                   destructive, it is rare, and #8 made it the escape hatch for
                   charging stops rather than an everyday control. */}
               {!first && (
                 <span className="font-sans">
                   <PillButton disabled={busy} onClick={onMerge}>
-                    samenvoegen met vorige rit
+                    merge into the previous trip
                   </PillButton>
                 </span>
               )}
@@ -782,13 +782,13 @@ function Place({
     return (
       <span className={confidence === 'low' ? 'text-amber-700 dark:text-amber-400' : undefined}>
         {place.label}
-        {confidence === 'low' && <span title="Twee locaties liggen bijna even dichtbij — controleer deze">~</span>}
+        {confidence === 'low' && <span title="Two places are almost equally close — check this one">~</span>}
       </span>
     );
   }
-  if (preTracking) return <span className="text-zinc-400" title="Geen positiegegevens uit die periode">—</span>;
-  if (confidence === null) return <span className="text-zinc-400" title="Nog niet gematcht">·</span>;
-  return <span className="text-amber-700 dark:text-amber-400" title="Geen locatie binnen bereik — n om te noemen, w om op te rekken">?</span>;
+  if (preTracking) return <span className="text-zinc-400" title="No position data from that period">—</span>;
+  if (confidence === null) return <span className="text-zinc-400" title="Not matched yet">·</span>;
+  return <span className="text-amber-700 dark:text-amber-400" title="No place within range — use “name” to add one">?</span>;
 }
 
 function Badge({ on, dim, children }: { on: boolean; dim?: boolean; children: React.ReactNode }) {

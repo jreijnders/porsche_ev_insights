@@ -83,9 +83,9 @@ export interface NamePlacePanelProps {
 }
 
 const KINDS: { value: 'home' | 'business' | 'other'; label: string }[] = [
-  { value: 'business', label: 'zakelijk adres' },
-  { value: 'home', label: 'thuis' },
-  { value: 'other', label: 'overig' },
+  { value: 'business', label: 'business address' },
+  { value: 'home', label: 'home' },
+  { value: 'other', label: 'other' },
 ];
 
 export default function NamePlacePanel({
@@ -131,16 +131,16 @@ export default function NamePlacePanel({
             </div>
           )}
         </div>
-        <PillButton onClick={onClose}>sluiten</PillButton>
+        <PillButton onClick={onClose}>close</PillButton>
       </div>
 
       {/* Known places first. Half of all unmatched arrivals are a place you
           already have, sitting just outside its radius — offering "create new"
           without saying so is how you end up with two places for one spot. */}
       <div className="mt-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Bekende locaties in de buurt</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Places you already know nearby</div>
         {evidence.candidates.length === 0 ? (
-          <p className="mt-1 text-xs text-zinc-500">Geen bekende locatie binnen 1 km — dit is een nieuwe plek.</p>
+          <p className="mt-1 text-xs text-zinc-500">No known place within 1 km — this is a new spot.</p>
         ) : (
           <ul className="mt-1 space-y-1">
             {evidence.candidates.map((c) => (
@@ -151,7 +151,7 @@ export default function NamePlacePanel({
                 </span>
                 {c.withinRadius ? (
                   c.placeId === evidence.currentPlaceId ? (
-                    <span className="text-xs text-zinc-500">huidige keuze</span>
+                    <span className="text-xs text-zinc-500">current choice</span>
                   ) : (
                     // Deliberately NOT a "use this one" button.
                     //
@@ -164,8 +164,8 @@ export default function NamePlacePanel({
                     //
                     // The durable fix for an ambiguity is geometric: make one
                     // of the two circles stop reaching here.
-                    <span className="text-xs text-zinc-500" title="Bereikt deze plek ook — pas de straal aan in het locatieboek om de dubbelzinnigheid op te lossen">
-                      bereikt deze plek ook
+                    <span className="text-xs text-zinc-500" title="Reaches this spot too — adjust its radius in the place book to resolve the ambiguity">
+                      reaches this spot too
                     </span>
                   )
                 ) : (
@@ -177,12 +177,12 @@ export default function NamePlacePanel({
                     tone={c.widenNeedsOverride ? 'warn' : 'plain'}
                     title={
                       c.widenNeedsOverride
-                        ? `Boven ${evidence.ceilingM} m gaat een locatie de buren opslokken`
+                        ? `Past ${evidence.ceilingM} m a place starts swallowing its neighbours`
                         : undefined
                     }
                   >
                     {c.widenNeedsOverride ? '⚠ ' : ''}
-                    {c.label} oprekken naar {c.widenToM} m
+                    widen {c.label} to {c.widenToM} m
                   </PillButton>
                 )}
               </li>
@@ -194,11 +194,11 @@ export default function NamePlacePanel({
             the next re-match would put the ambiguity straight back. */}
         {evidence.currentPlaceId != null && evidence.candidates.length > 1 && (
           <p className="mt-1 text-xs text-zinc-500">
-            Twee locaties liggen bijna even dichtbij. Verklein in het{' '}
+            Two places are almost equally close. Shrink the wrong one’s radius in the{' '}
             <a href="/places" className="underline underline-offset-2">
-              locatieboek
+              place book
             </a>{' '}
-            de straal van de verkeerde — een handmatige keuze hier zou bij de volgende match weer verdwijnen.
+            — a manual choice here would disappear again at the next re-match.
           </p>
         )}
       </div>
@@ -210,7 +210,7 @@ export default function NamePlacePanel({
             autoFocus
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Naam voor deze locatie"
+            placeholder="Name for this place"
             className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
           />
           <select
@@ -230,14 +230,14 @@ export default function NamePlacePanel({
             onClick={() => onCreate({ label: label.trim(), kind, googlePlaceId })}
             className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
           >
-            opslaan
+            save
           </button>
         </div>
         {googlePlaceId && (
           <p className="mt-1 text-xs text-zinc-500">
-            Google-locatie gekoppeld (id bewaard, naam niet — die typ je zelf).{' '}
+            Google place linked (id kept, name not — you type that yourself).{' '}
             <button type="button" onClick={() => setGooglePlaceId(null)} className="underline underline-offset-2">
-              loskoppelen
+              unlink
             </button>
           </p>
         )}
@@ -258,7 +258,7 @@ export default function NamePlacePanel({
             onClick={() => setGoogleOpen(true)}
             className="text-xs text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-200"
           >
-            wie zit hier? (Google)
+            who is here? (Google)
           </button>
         )}
       </div>
@@ -354,23 +354,23 @@ function GooglePanel({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="zoek op naam (leeg = in de buurt)"
+          placeholder="search by name (empty = nearby)"
           className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
         />
         <button type="button" onClick={onClose} className="text-xs text-zinc-500 hover:underline">
-          verbergen
+          hide
         </button>
       </div>
 
-      {state === 'loading' && <p className="text-xs text-zinc-500">Google laden…</p>}
+      {state === 'loading' && <p className="text-xs text-zinc-500">Loading Google…</p>}
       {state === 'unavailable' && (
         // Naming still works. This is a missing convenience, not a failure.
         <p className="text-xs text-zinc-500">
-          Google is niet beschikbaar (geen sleutel of geen verbinding) — typ de naam zelf hierboven.
+          Google is unavailable (no key, or no connection) — type the name yourself above.
         </p>
       )}
       <div ref={host} className={state === 'ready' ? 'max-h-64 overflow-y-auto' : 'hidden'} />
-      {picked && <p className="mt-1 text-xs text-zinc-500">Gekozen id: <span className="font-mono">{picked}</span></p>}
+      {picked && <p className="mt-1 text-xs text-zinc-500">Chosen id: <span className="font-mono">{picked}</span></p>}
     </div>
   );
 }
@@ -447,26 +447,26 @@ function ManualPanel({
     <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="font-medium">Locatie handmatig instellen</div>
+          <div className="font-medium">Set the place by hand</div>
           <p className="text-xs text-zinc-500">
-            Deze rit is van vóór de locatieregistratie — er is geen positie vastgelegd, dus je zegt zelf waar hij
-            eindigde. Dat blijft staan: het matchen laat deze ritten met rust.
+            This trip predates position tracking — no position was ever recorded, so you say where it ended.
+            That sticks: matching leaves these trips alone.
           </p>
         </div>
-        <PillButton onClick={onClose}>sluiten</PillButton>
+        <PillButton onClick={onClose}>close</PillButton>
       </div>
 
       {/* 1. A place you already have. */}
       <div className="mt-3">
-        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Bestaande locatie kiezen</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Pick a place you already have</div>
         {book.length === 0 ? (
-          <p className="mt-1 text-xs text-zinc-500">Het locatieboek is nog leeg — maak er hieronder een aan.</p>
+          <p className="mt-1 text-xs text-zinc-500">The place book is still empty — create one below.</p>
         ) : (
           <>
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              placeholder="filter op naam of adres"
+              placeholder="filter by name or address"
               className="mt-1 w-full rounded-xl border border-zinc-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-800 dark:bg-zinc-950"
             />
             <ul className="mt-1 max-h-40 space-y-1 overflow-y-auto">
@@ -481,11 +481,11 @@ function ManualPanel({
                     disabled={busy || !onAttach}
                     onClick={() => onAttach?.(p.id)}
                   >
-                    {p.id === evidence.currentPlaceId ? 'huidige' : 'kiezen'}
+                    {p.id === evidence.currentPlaceId ? 'current' : 'pick'}
                   </PillButton>
                 </li>
               ))}
-              {shown.length === 0 && <li className="text-xs text-zinc-500">Niets gevonden.</li>}
+              {shown.length === 0 && <li className="text-xs text-zinc-500">Nothing found.</li>}
             </ul>
           </>
         )}
@@ -493,7 +493,7 @@ function ManualPanel({
 
       {/* 2. A new place, from an address. */}
       <div className="mt-3 border-t border-zinc-200/60 pt-3 dark:border-zinc-800/60">
-        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Nieuwe locatie op adres</div>
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">New place from an address</div>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <input
             value={query}
@@ -501,11 +501,11 @@ function ManualPanel({
             onKeyDown={(e) => {
               if (e.key === 'Enter') void search();
             }}
-            placeholder="adres of plaats, bv. Giessenweg 5 Rotterdam"
+            placeholder="address or town, e.g. Giessenweg 5 Rotterdam"
             className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
           />
           <PillButton disabled={busy || searching || query.trim() === ''} onClick={() => void search()}>
-            {searching ? 'zoeken…' : 'zoek adres'}
+            {searching ? 'searching…' : 'find address'}
           </PillButton>
         </div>
 
@@ -522,7 +522,7 @@ function ManualPanel({
                 </button>
               </li>
             ))}
-            {hits.length === 0 && !searching && <li className="text-zinc-500">Geen adres gevonden.</li>}
+            {hits.length === 0 && !searching && <li className="text-zinc-500">No address found.</li>}
           </ul>
         )}
 
@@ -530,7 +530,7 @@ function ManualPanel({
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Naam voor deze locatie"
+            placeholder="Name for this place"
             className="min-w-0 flex-1 rounded-xl border border-zinc-200 bg-white px-3 py-1.5 dark:border-zinc-800 dark:bg-zinc-950"
           />
           <select
@@ -550,7 +550,7 @@ function ManualPanel({
             onClick={() => onCreateAt?.({ label: label.trim(), kind, query: query.trim(), googlePlaceId })}
             className="rounded-xl bg-sky-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-sky-600 disabled:opacity-40"
           >
-            aanmaken
+            create
           </button>
         </div>
         {googlePlaceId && (
@@ -562,8 +562,8 @@ function ManualPanel({
           </p>
         )}
         <p className="mt-1 text-xs text-zinc-500">
-          De coördinaat komt van OpenStreetMap, niet van de auto — dus hij wijst naar het adres, niet naar de plek waar
-          je precies geparkeerd stond. Voor toekomstige ritten kun je de straal in het locatieboek bijstellen.
+          The coordinate comes from OpenStreetMap, not from the car — so it points at the address, not at where you
+          actually parked. For future trips you can adjust the radius in the place book.
         </p>
       </div>
 
@@ -584,7 +584,7 @@ function ManualPanel({
             onClick={() => setGoogleOpen(true)}
             className="text-xs text-zinc-500 underline underline-offset-2 hover:text-zinc-800 dark:hover:text-zinc-200"
           >
-            zoek op bedrijfsnaam (Google)
+            search by business name (Google)
           </button>
         )}
       </div>

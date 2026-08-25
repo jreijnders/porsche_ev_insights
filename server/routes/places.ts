@@ -354,7 +354,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // building next door. The client must send `override` to mean it.
       if (!verdict.allowed) {
         return reply.status(409).send({
-          error: `Dat zou ${target.label} ${verdict.newRadiusM} m groot maken — boven ${WIDEN_WARNING_M} m gaat een locatie de buren opslokken. Bevestig als je dit echt wilt.`,
+          error: `That would make ${target.label} ${verdict.newRadiusM} m across — past ${WIDEN_WARNING_M} m a place starts swallowing its neighbours. Confirm if you really mean it.`,
           needsOverride: true,
           wouldBecomeM: verdict.newRadiusM,
           currentRadiusM: target.matchRadiusM,
@@ -572,7 +572,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       .filter((x): x is { r: (typeof tripRows)[number]; arrival: NonNullable<typeof x.arrival> } => x.arrival !== null);
 
     if (points.length === 0) {
-      return reply.status(409).send({ error: 'Geen van die ritten heeft een aankomstpositie.' });
+      return reply.status(409).send({ error: 'None of those trips has an arrival position.' });
     }
 
     const lat = points.reduce((s, p) => s + p.arrival.fix.lat, 0) / points.length;
@@ -634,7 +634,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return {
         ok: false,
         status: 409,
-        error: 'Deze rit is gecontroleerd — haal het vinkje eraf voordat je de locatie wijzigt.',
+        error: 'This trip is checked — uncheck it before changing its place.',
       };
     }
     if (!(await isPreTracking(row.endedAt, row.vin))) {
@@ -642,7 +642,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         ok: false,
         status: 409,
         error:
-          'Deze rit heeft wél positiegegevens, dus het matchen bepaalt de locatie — een handmatige keuze zou bij de volgende match verdwijnen. Pas de straal van de locatie aan.',
+          'This trip does have position data, so matching decides its place — a manual choice would disappear at the next re-match. Adjust the place\'s radius instead.',
       };
     }
     return { ok: true };
@@ -702,7 +702,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
     const [hit] = await searchPlaces(body.query, 1);
     if (!hit) {
-      return reply.status(409).send({ error: `Geen adres gevonden voor "${body.query}".` });
+      return reply.status(409).send({ error: `No address found for "${body.query}".` });
     }
 
     const [created] = await db

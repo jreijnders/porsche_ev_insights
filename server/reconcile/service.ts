@@ -134,7 +134,7 @@ export async function acknowledgeGap(
       note:
         note ??
         `Erkend gat: ${target.differenceKm} km tussen tellerstand ${target.fromKm} en ${target.toKm}. ` +
-          'Handmatig toegevoegd om de rittenregistratie sluitend te maken.',
+          'Added by hand to make the mileage log reconcile.',
     })
     .returning({ id: trip.id });
 
