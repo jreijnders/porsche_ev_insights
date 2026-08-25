@@ -1,9 +1,15 @@
 /**
  * The place book (#11): create, edit, delete, and re-run matching.
  *
- * Manual-first. Every place here exists because a human named it — nothing in
- * this file talks to Google, and matching works with the network unplugged.
- * Google-sourced suggestions are additive and deliberately elsewhere.
+ * Manual-first. Every place here exists because a human named it, and matching
+ * works with the network unplugged.
+ *
+ * Nothing in this file calls Google. The naming panel (#30) renders Google
+ * content in the BROWSER, inside a Places UI Kit element, and posts back a
+ * `place_id` and a label the human typed — so the only Google-derived value
+ * that ever reaches this server is an opaque ID, which #5 confirmed may be
+ * stored indefinitely. Addresses come from Nominatim, which permits permanent
+ * storage.
  */
 
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
@@ -11,7 +17,16 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 
 import { place, sample, trip } from '../../db/schema.js';
 import { db } from '../db/client.js';
-import { haversineMeters } from '../places/match.js';
+import { haversineMeters, selectArrivalFix, type MatchablePlace, type TimedFix } from '../places/match.js';
+import {
+  clusterArrivals,
+  judgeWiden,
+  nearbyCandidates,
+  WIDEN_MARGIN_M,
+  WIDEN_WARNING_M,
+  type ArrivalPoint,
+} from '../places/naming.js';
+import { reverseGeocode } from '../places/nominatim.js';
 import { DEFAULT_MATCH_CONFIG, placeUsage, rematchVehicle } from '../places/service.js';
 
 type PlaceKind = 'home' | 'business' | 'other';
@@ -23,6 +38,12 @@ interface PlaceBody {
   lon?: number;
   matchRadiusM?: number;
   note?: string | null;
+  /**
+   * From the Google panel (#30). The ID is ALL we take: names and addresses
+   * have no caching permission at any duration (#5), so the label is typed by
+   * the human having read the name inside Google's own component.
+   */
+  googlePlaceId?: string | null;
 }
 
 const KINDS: readonly PlaceKind[] = ['home', 'business', 'other'];
@@ -67,6 +88,21 @@ async function onlyVin(): Promise<string | null> {
   return rows[0]?.vin ?? null;
 }
 
+/**
+ * The address to store on a new place, looked up once at creation (#30).
+ *
+ * Stored and never refetched: OSMF permits permanent storage, so a place keeps
+ * a readable address even when Nominatim is unreachable later — and creating a
+ * place is the one moment a human is already waiting, so the ~1 s the usage
+ * policy costs is affordable exactly here and nowhere else.
+ *
+ * A failed lookup is not an error. The place is created without an address.
+ */
+async function addressFor(lat: number, lon: number): Promise<{ address: string | null; addressSource: string | null }> {
+  const result = await reverseGeocode(lat, lon);
+  return { address: result?.address ?? null, addressSource: result?.source ?? null };
+}
+
 /** Re-match after any change to the book, so a new place names old trips at once. */
 async function rematchAfterChange(): Promise<void> {
   const vin = await onlyVin();
@@ -105,6 +141,8 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         lon: coord(body.lon!),
         matchRadiusM: body.matchRadiusM ?? 100,
         note: body.note ?? null,
+        googlePlaceId: body.googlePlaceId ?? null,
+        ...(await addressFor(body.lat!, body.lon!)),
       })
       .returning();
     if (!created) return reply.status(500).send({ error: 'Insert returned no row' });
@@ -168,6 +206,8 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         lon: fix.lon,
         matchRadiusM: body.matchRadiusM ?? 100,
         note: body.note ?? null,
+        googlePlaceId: body.googlePlaceId ?? null,
+        ...(await addressFor(Number(fix.lat), Number(fix.lon))),
       })
       .returning();
     if (!created) return reply.status(500).send({ error: 'Insert returned no row' });
@@ -255,7 +295,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
    *
    * Still never automatic. Nothing calls this except a human choosing to.
    */
-  app.post<{ Params: { id: string }; Body: { placeId?: number; marginM?: number } }>(
+  app.post<{ Params: { id: string }; Body: { placeId?: number; marginM?: number; override?: boolean } }>(
     '/widen-for-trip/:id',
     async (request, reply) => {
       const tripId = Number(request.params.id);
@@ -293,14 +333,31 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         { lat: Number(fix.lat), lon: Number(fix.lon) },
         { lat: Number(target.lat), lon: Number(target.lon) },
       );
-      const margin = request.body?.marginM ?? 10;
-      const newRadius = Math.ceil(distanceM + margin);
+      const margin = request.body?.marginM ?? WIDEN_MARGIN_M;
+      const verdict = judgeWiden(target.matchRadiusM, distanceM, margin, request.body?.override === true);
 
-      if (newRadius <= target.matchRadiusM) {
+      if (!verdict.allowed && verdict.reason === 'no-op') {
         return reply.status(409).send({
           error: `${target.label} already reaches that far (${target.matchRadiusM} m, fix is ${Math.round(distanceM)} m away) — widening would change nothing.`,
         });
       }
+
+      // The ceiling (#30). Not a refusal to widen — a refusal to widen this far
+      // by accident. #11 banned the RATCHET, not the human decision, and a
+      // radius past WIDEN_WARNING_M is where a place starts claiming the
+      // building next door. The client must send `override` to mean it.
+      if (!verdict.allowed) {
+        return reply.status(409).send({
+          error: `Dat zou ${target.label} ${verdict.newRadiusM} m groot maken — boven ${WIDEN_WARNING_M} m gaat een locatie de buren opslokken. Bevestig als je dit echt wilt.`,
+          needsOverride: true,
+          wouldBecomeM: verdict.newRadiusM,
+          currentRadiusM: target.matchRadiusM,
+          fixDistanceM: Math.round(distanceM),
+          ceilingM: WIDEN_WARNING_M,
+        });
+      }
+
+      const newRadius = verdict.newRadiusM;
 
       const [updated] = await db
         .update(place)
@@ -317,6 +374,203 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       };
     },
   );
+
+  /* ------------------------------------------------- the naming panel (#30) */
+
+  /**
+   * Everything the naming panel needs for one trip, in one call.
+   *
+   * One round trip rather than three, because the panel opens inline in a
+   * ledger row and a staggered fill would make the row jump under the pointer.
+   */
+  app.get<{ Params: { id: string } }>('/naming/:id', async (request, reply) => {
+    const tripId = Number(request.params.id);
+    if (!Number.isInteger(tripId)) return reply.status(400).send({ error: 'Bad trip id' });
+
+    const [row] = await db.select().from(trip).where(eq(trip.id, tripId));
+    if (!row) return reply.status(404).send({ error: 'No such trip' });
+
+    const windowMs = DEFAULT_MATCH_CONFIG.toleranceMinutes * 60_000;
+    const [fix] = await db
+      .select({ lat: sample.lat, lon: sample.lon })
+      .from(sample)
+      .where(
+        and(
+          eq(sample.vin, row.vin),
+          atOrAfter(row.endedAt),
+          atOrBefore(new Date(row.endedAt.getTime() + windowMs)),
+        ),
+      )
+      .orderBy(sql`${fixTime} asc`)
+      .limit(1);
+
+    // Pre-tracking trips have no coordinate, so there is nothing to name and
+    // nothing to show. The ledger renders them as "—" (#22) and never opens
+    // the panel; this is the server saying the same thing.
+    if (!fix) {
+      return reply.status(409).send({
+        error: 'Geen positiegegevens rond deze rit — er is geen coördinaat om te benoemen.',
+        preTracking: true,
+      });
+    }
+
+    const at = { lat: Number(fix.lat), lon: Number(fix.lon) };
+    const rows = await db.select().from(place);
+    const matchable: MatchablePlace[] = rows.map((p) => ({
+      id: p.id,
+      lat: Number(p.lat),
+      lon: Number(p.lon),
+      matchRadiusM: p.matchRadiusM,
+      kind: p.kind,
+    }));
+    const byId = new Map(rows.map((p) => [p.id, p]));
+
+    const candidates = nearbyCandidates(at, matchable).map((c) => ({
+      ...c,
+      label: byId.get(c.placeId)?.label ?? '?',
+      kind: byId.get(c.placeId)?.kind ?? 'other',
+    }));
+
+    // Address last: it is the one part that can be slow, and it is also the
+    // one part the panel can live without.
+    const address = await reverseGeocode(at.lat, at.lon);
+
+    return {
+      tripId,
+      at,
+      address: address?.address ?? null,
+      candidates,
+      /** Which candidate, if any, the trip currently names — the "~" case. */
+      currentPlaceId: row.endPlaceId,
+      currentConfidence: row.endPlaceConfidence,
+      ceilingM: WIDEN_WARNING_M,
+    };
+  });
+
+  /**
+   * Arrivals that matched no place, grouped into spots (#30).
+   *
+   * The place book's own question — "which spots do I keep going to without a
+   * name?" — as opposed to the ledger's "where did THIS trip end?". Same
+   * evidence, different cut, and this one names several trips at once.
+   *
+   * Checked trips are excluded: naming a cluster creates a place and re-matches,
+   * and a checked trip is never rewritten (#22). Including them would offer an
+   * action that then silently skipped half its members.
+   */
+  app.get('/unnamed', async () => {
+    const vin = await onlyVin();
+    if (!vin) return { clusters: [] };
+
+    const rows = await db
+      .select({ id: trip.id, endedAt: trip.endedAt })
+      .from(trip)
+      .where(and(eq(trip.vin, vin), isNull(trip.endPlaceId), isNull(trip.checkedAt)));
+
+    if (rows.length === 0) return { clusters: [] };
+
+    const fixRows = await db
+      .select({ eventAt: sample.eventAt, observedAt: sample.observedAt, lat: sample.lat, lon: sample.lon })
+      .from(sample)
+      .where(eq(sample.vin, vin));
+    const fixes: TimedFix[] = fixRows.map((f) => ({
+      at: f.eventAt ?? f.observedAt,
+      lat: Number(f.lat),
+      lon: Number(f.lon),
+    }));
+
+    const points: ArrivalPoint[] = [];
+    for (const r of rows) {
+      const arrival = selectArrivalFix(r.endedAt, fixes, DEFAULT_MATCH_CONFIG.toleranceMinutes);
+      // No fix means the trip predates position tracking. It is not an unnamed
+      // spot — it is a trip with no spot at all, and listing it here would
+      // offer a naming action that cannot work.
+      if (!arrival) continue;
+      points.push({ tripId: r.id, lat: arrival.fix.lat, lon: arrival.fix.lon, endedAt: r.endedAt });
+    }
+
+    const clusters = clusterArrivals(points);
+
+    // Addresses are fetched serially by the Nominatim queue anyway, so cap the
+    // number rather than let a first run of fifty clusters take a minute. The
+    // cap is stated in the response rather than silently applied.
+    const ADDRESSED = 10;
+    const withAddress = await Promise.all(
+      clusters.map(async (c, i) => ({
+        ...c,
+        address: i < ADDRESSED ? ((await reverseGeocode(c.lat, c.lon))?.address ?? null) : null,
+        addressLookedUp: i < ADDRESSED,
+      })),
+    );
+
+    return { clusters: withAddress, addressedLimit: ADDRESSED };
+  });
+
+  /**
+   * Name a cluster: one place, and every trip in it placed by the re-match.
+   *
+   * The coordinate is the cluster centre computed server-side rather than one
+   * the browser passed back, for the same reason widen recomputes its distance
+   * — the coordinate decides what matches, so it must not be settable from a
+   * stale screen.
+   */
+  type FromCluster = { Body: PlaceBody & { tripIds?: number[] } };
+  app.post<FromCluster>('/from-cluster', async (request, reply) => {
+    const body = request.body ?? {};
+    if (!body.label || body.label.trim() === '') return reply.status(400).send({ error: 'label is required' });
+    if (!body.kind || !KINDS.includes(body.kind)) return reply.status(400).send({ error: 'kind is required' });
+    if (!Array.isArray(body.tripIds) || body.tripIds.length === 0) {
+      return reply.status(400).send({ error: 'tripIds is required' });
+    }
+
+    const vin = await onlyVin();
+    if (!vin) return reply.status(409).send({ error: 'No trips yet' });
+
+    const fixRows = await db
+      .select({ eventAt: sample.eventAt, observedAt: sample.observedAt, lat: sample.lat, lon: sample.lon })
+      .from(sample)
+      .where(eq(sample.vin, vin));
+    const fixes: TimedFix[] = fixRows.map((f) => ({
+      at: f.eventAt ?? f.observedAt,
+      lat: Number(f.lat),
+      lon: Number(f.lon),
+    }));
+
+    const tripRows = await db.select({ id: trip.id, endedAt: trip.endedAt }).from(trip).where(eq(trip.vin, vin));
+    const wanted = new Set(body.tripIds);
+    const points = tripRows
+      .filter((r) => wanted.has(r.id))
+      .map((r) => ({ r, arrival: selectArrivalFix(r.endedAt, fixes, DEFAULT_MATCH_CONFIG.toleranceMinutes) }))
+      .filter((x): x is { r: (typeof tripRows)[number]; arrival: NonNullable<typeof x.arrival> } => x.arrival !== null);
+
+    if (points.length === 0) {
+      return reply.status(409).send({ error: 'Geen van die ritten heeft een aankomstpositie.' });
+    }
+
+    const lat = points.reduce((s, p) => s + p.arrival.fix.lat, 0) / points.length;
+    const lon = points.reduce((s, p) => s + p.arrival.fix.lon, 0) / points.length;
+
+    const [created] = await db
+      .insert(place)
+      .values({
+        label: body.label.trim(),
+        kind: body.kind,
+        lat: coord(lat),
+        lon: coord(lon),
+        matchRadiusM: body.matchRadiusM ?? 100,
+        note: body.note ?? null,
+        googlePlaceId: body.googlePlaceId ?? null,
+        ...(await addressFor(lat, lon)),
+      })
+      .returning();
+    if (!created) return reply.status(500).send({ error: 'Insert returned no row' });
+
+    await rematchAfterChange();
+    return reply.status(201).send({
+      place: { ...created, lat: Number(created.lat), lon: Number(created.lon) },
+      tripsInCluster: points.length,
+    });
+  });
 
   /** Re-run matching on demand. Idempotent; never touches a checked trip. */
   app.post('/rematch', async (_request, reply) => {

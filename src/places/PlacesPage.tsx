@@ -5,14 +5,20 @@
  * this screen talks to Google, and the whole thing works with the network to
  * the outside world unplugged.
  *
- * Deliberately NOT here: the unmatched-place flow — map popup, nearby-company
- * list, fuzzy search. That is still fog on the map and needs the Maps key;
- * building half of it here would pre-empt the decision.
+ * The naming flow lives here too (#30), as "onbenoemde plekken": arrivals that
+ * matched nothing, grouped into spots. The ledger asks "where did THIS trip
+ * end?"; this asks "which spots do I keep going to without a name?" — same
+ * evidence, different cut, and naming one spot places every trip in it.
+ *
+ * Still deliberately absent: any coordinate picker. Every place is born from a
+ * position the car actually reported, never from a point typed or clicked on a
+ * map.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
-import type { Place, PlaceKind } from './types';
+import NamePlacePanel from './NamePlacePanel';
+import type { ArrivalCluster, Place, PlaceKind } from './types';
 
 const API = '/api/places';
 
@@ -38,6 +44,9 @@ export default function PlacesPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<number | null>(null);
+  const [clusters, setClusters] = useState<ArrivalCluster[]>([]);
+  /** Index of the cluster whose naming panel is open. */
+  const [naming, setNaming] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -46,6 +55,14 @@ export default function PlacesPage() {
       setError(null);
     } catch (e) {
       setError((e as Error).message);
+    }
+    // Separate and non-fatal: the unnamed list costs Nominatim lookups, so a
+    // failure here must not blank the place book itself.
+    try {
+      const { clusters } = await json<{ clusters: ArrivalCluster[] }>(`${API}/unnamed`);
+      setClusters(clusters);
+    } catch {
+      setClusters([]);
     }
   }, []);
 
@@ -89,6 +106,20 @@ export default function PlacesPage() {
     // rewrite verified history is the point, so the reason has to be readable.
     void mutate(() => json(`${API}/${place.id}`, { method: 'DELETE' }), 'Locatie verwijderd.');
   };
+
+  const nameCluster = (
+    cluster: ArrivalCluster,
+    input: { label: string; kind: PlaceKind; googlePlaceId: string | null },
+  ) =>
+    mutate(async () => {
+      const { tripsInCluster } = await json<{ tripsInCluster: number }>(`${API}/from-cluster`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...input, tripIds: cluster.tripIds }),
+      });
+      setNotice(`"${input.label}" aangemaakt — ${tripsInCluster} rit(ten) gematcht.`);
+      setNaming(null);
+    });
 
   const rematch = () =>
     mutate(async () => {
@@ -153,11 +184,68 @@ export default function PlacesPage() {
           )}
           {places.length === 0 && !error && (
             <p className="py-10 text-center text-sm text-zinc-500">
-              Nog geen locaties. Noem er een vanuit een rit met <kbd className="font-mono">n</kbd> in het
+              Nog geen locaties. Noem er een hieronder bij een onbenoemde plek, of vanuit een rit in het
               rittenoverzicht — dan neemt hij de coördinaat van die rit over.
             </p>
           )}
         </div>
+
+        {/* Onbenoemde plekken (#30). Empty until the poller has collected
+            enough positions for trips to have arrivals that match nothing. */}
+        <section className="mt-8">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">Onbenoemde plekken</h2>
+          {clusters.length === 0 ? (
+            <p className="mt-2 text-sm text-zinc-500">
+              Geen aankomsten zonder locatie — alles wat een positie heeft, heeft een naam.
+            </p>
+          ) : (
+            <div className="mt-2 divide-y divide-zinc-200 dark:divide-zinc-800">
+              {clusters.map((cluster, index) => (
+                <div key={`${cluster.lat},${cluster.lon}`} className="py-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <span className="text-sm">
+                      {cluster.address ?? (
+                        <span className="font-mono text-zinc-500">
+                          {cluster.lat.toFixed(5)}, {cluster.lon.toFixed(5)}
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono text-xs tabular-nums text-zinc-500">
+                      {cluster.tripIds.length} rit{cluster.tripIds.length === 1 ? '' : 'ten'} · spreiding{' '}
+                      {cluster.spreadM} m · laatst {new Date(cluster.latestAt).toLocaleDateString('nl-NL')}
+                    </span>
+                  </div>
+                  {naming === index ? (
+                    <NamePlacePanel
+                      // The place book's cut has no per-trip candidates to
+                      // offer: this spot matched nothing, so widening is not
+                      // one of the answers here — naming is.
+                      evidence={{
+                        at: { lat: cluster.lat, lon: cluster.lon },
+                        address: cluster.address,
+                        candidates: [],
+                        ceilingM: 250,
+                      }}
+                      busy={busy}
+                      onCreate={(input) => void nameCluster(cluster, input)}
+                      onWiden={() => undefined}
+                      onClose={() => setNaming(null)}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setNaming(index)}
+                      className="mt-1 rounded border border-zinc-300 px-2 py-0.5 text-xs hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
+                    >
+                      benoemen
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );

@@ -20,3 +20,23 @@ export interface Place {
   note: string | null;
   usage: PlaceUsage;
 }
+
+/**
+ * A group of arrivals that matched no place (#30) — the place book's own
+ * question: "which spots do I keep going to without a name?"
+ *
+ * Not stored anywhere. Computed from the trips on every read, like usage, for
+ * the same reason: a stored copy is wrong the moment a re-match moves a trip.
+ */
+export interface ArrivalCluster {
+  lat: number;
+  lon: number;
+  tripIds: number[];
+  latestAt: string;
+  /** Widest distance from the centre — how spread the parking is, in metres. */
+  spreadM: number;
+  /** From Nominatim, or null when the lookup was skipped or failed. */
+  address: string | null;
+  /** False when this cluster was past the address-lookup cap, not when it failed. */
+  addressLookedUp: boolean;
+}

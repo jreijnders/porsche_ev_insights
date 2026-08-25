@@ -17,6 +17,7 @@ import { sql } from 'drizzle-orm';
 import { db } from './db/client.js';
 import { getEnv } from './env.js';
 import { initHarvester } from './poller/index.js';
+import configRoutes from './routes/config.js';
 import ledgerRoutes from './routes/ledger.js';
 import placeRoutes from './routes/places.js';
 import porscheRoutes from './routes/porsche.js';
@@ -41,6 +42,7 @@ app.get('/api/health', async () => {
 });
 
 await app.register(porscheRoutes, { prefix: '/api/porsche' });
+await app.register(configRoutes, { prefix: '/api/config' });
 await app.register(ledgerRoutes, { prefix: '/api/ledger' });
 await app.register(placeRoutes, { prefix: '/api/places' });
 
