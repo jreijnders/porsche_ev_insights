@@ -25,6 +25,20 @@ declare global {
 
 let loading: Promise<boolean> | null = null;
 
+/** Makes each attempt's global callback name unique. See loadPlacesUiKit. */
+let callbackSeq = 0;
+
+/**
+ * How long to wait for Google's callback before calling it unavailable.
+ *
+ * A rejected key is the case this exists for: the bootstrap stub loads and
+ * runs, so `onerror` never fires, but google.maps is never built and the
+ * callback is never called. Without a deadline the panel would sit on
+ * "loading" for the rest of the session — the one outcome worse than saying
+ * Google is unavailable, because it never lets you fall back to typing.
+ */
+const CALLBACK_TIMEOUT_MS = 10_000;
+
 async function fetchKey(): Promise<string | null> {
   try {
     const response = await fetch(CONFIG);
@@ -61,12 +75,35 @@ export function loadPlacesUiKit(): Promise<boolean> {
 
     const ok = await new Promise<boolean>((resolve) => {
       const script = document.createElement('script');
-      // `loading=async` is what makes the bootstrap define importLibrary
-      // instead of blocking on a global callback.
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&v=weekly&libraries=places&loading=async`;
+
+      // The `callback` parameter is load-bearing, not ceremony. The script the
+      // bootstrap URL returns is a tiny stub: `onload` fires as soon as THAT
+      // has run, which is before google.maps exists. Resolving on `onload`
+      // therefore reads importLibrary as undefined and every caller concludes
+      // "no Google button" — a silent degradation, because this function is
+      // deliberately written never to throw. Measured: onload sees undefined,
+      // the callback sees a function, and it arrives ~100 ms later.
+      const done = `__placesUiKitReady_${(callbackSeq += 1)}`;
+      const globals = window as unknown as Record<string, unknown>;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+
+      const settle = (value: boolean) => {
+        clearTimeout(deadline);
+        delete globals[done];
+        resolve(value);
+      };
+
+      globals[done] = () => settle(true);
+      deadline = setTimeout(() => settle(false), CALLBACK_TIMEOUT_MS);
+
+      script.src =
+        `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}` +
+        `&v=weekly&libraries=places&loading=async&callback=${done}`;
       script.async = true;
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
+      // `onload` can no longer mean success, but it still cannot mean failure:
+      // the stub loads fine when the key is rejected. Only `onerror` is a
+      // verdict, and only the callback is a success.
+      script.onerror = () => settle(false);
       document.head.appendChild(script);
     });
 
