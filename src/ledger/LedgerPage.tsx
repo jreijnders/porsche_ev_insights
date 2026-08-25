@@ -14,7 +14,7 @@
  * and #14 makes the checked flag the thing that lets a kilometre count.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import NamePlacePanel, { type NamingEvidence } from '../places/NamePlacePanel';
 
