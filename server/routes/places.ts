@@ -89,6 +89,26 @@ async function isPreTracking(endedAt: Date, vin: string): Promise<boolean> {
   return isPreTrackingWindow(endedAt, await firstFixAt(vin), DEFAULT_MATCH_CONFIG.toleranceMinutes);
 }
 
+/**
+ * The fix the matcher would place a trip's destination from — first fix at or
+ * after arrival, within tolerance (selectArrivalFix). Null means geometry has
+ * no say over this trip's end place, so the planner leaves it alone and a
+ * hand-set one sticks. The naming panel and the manual routes both ask this
+ * one question, so they cannot disagree about which trips are manual.
+ */
+async function arrivalFix(row: { vin: string; endedAt: Date }): Promise<{ lat: number; lon: number } | null> {
+  const windowMs = DEFAULT_MATCH_CONFIG.toleranceMinutes * 60_000;
+  const [fix] = await db
+    .select({ lat: sample.lat, lon: sample.lon })
+    .from(sample)
+    .where(
+      and(eq(sample.vin, row.vin), atOrAfter(row.endedAt), atOrBefore(new Date(row.endedAt.getTime() + windowMs))),
+    )
+    .orderBy(sql`${fixTime} asc`)
+    .limit(1);
+  return fix ? { lat: Number(fix.lat), lon: Number(fix.lon) } : null;
+}
+
 async function onlyVin(): Promise<string | null> {
   const rows = await db.select({ vin: trip.vin }).from(trip).limit(1);
   return rows[0]?.vin ?? null;
@@ -396,19 +416,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     const [row] = await db.select().from(trip).where(eq(trip.id, tripId));
     if (!row) return reply.status(404).send({ error: 'No such trip' });
 
-    const windowMs = DEFAULT_MATCH_CONFIG.toleranceMinutes * 60_000;
-    const [fix] = await db
-      .select({ lat: sample.lat, lon: sample.lon })
-      .from(sample)
-      .where(
-        and(
-          eq(sample.vin, row.vin),
-          atOrAfter(row.endedAt),
-          atOrBefore(new Date(row.endedAt.getTime() + windowMs)),
-        ),
-      )
-      .orderBy(sql`${fixTime} asc`)
-      .limit(1);
+    const fix = await arrivalFix(row);
 
     // No fix means no coordinate, so none of the geometry below applies. That
     // is not a dead end: the trip still went somewhere, and you still know
@@ -421,6 +429,9 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       return {
         tripId,
         mode: 'manual' as const,
+        // Which kind of "no coordinate": tracking had not started yet, or it
+        // had and this arrival fell in a gap. Same panel; different sentence.
+        preTracking: await isPreTracking(row.endedAt, row.vin),
         at: null,
         address: null,
         candidates: [],
@@ -440,7 +451,7 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       };
     }
 
-    const at = { lat: Number(fix.lat), lon: Number(fix.lon) };
+    const at = fix;
     const rows = await db.select().from(place);
     const matchable: MatchablePlace[] = rows.map((p) => ({
       id: p.id,
@@ -637,7 +648,10 @@ const placeRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         error: 'This trip is checked — uncheck it before changing its place.',
       };
     }
-    if (!(await isPreTracking(row.endedAt, row.vin))) {
+    // Not "is it pre-tracking" but "does geometry own this destination": a
+    // trip after tracking began can still have no arrival fix (a gap in the
+    // data), and the planner leaves those alone just the same.
+    if ((await arrivalFix(row)) !== null) {
       return {
         ok: false,
         status: 409,

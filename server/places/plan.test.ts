@@ -130,6 +130,49 @@ describe('planRematch — destination matching', () => {
 
     expect(plan.updates[0]).toMatchObject({ endPlaceId: null, endFixDeltaMinutes: null });
   });
+
+  // A trip after tracking began with no arrival fix gets its place by hand in
+  // the naming panel. A re-match must not undo that: geometry has nothing to
+  // say about this destination.
+  const GAP_FIXES = [fix('2026-08-21T08:55:00Z', north(10)), fix('2026-08-21T11:00:00Z', north(10))];
+
+  it('keeps a hand-set destination when the trip has no arrival fix', () => {
+    const plan = planRematch({
+      ...BASE_INPUT,
+      trips: [trip({ id: 1, endPlaceId: OFFICE.id, endPlaceConfidence: 'high' })],
+      fixes: GAP_FIXES,
+    });
+
+    expect(plan.preTrackingTripIds).toEqual([]);
+    expect(plan.updates[0]).toMatchObject({ endPlaceId: OFFICE.id, endPlaceConfidence: 'high', endFixDeltaMinutes: null });
+  });
+
+  it('chains the next origin from that hand-set destination', () => {
+    const plan = planRematch({
+      ...BASE_INPUT,
+      trips: [
+        trip({ id: 1, endPlaceId: OFFICE.id, endPlaceConfidence: 'high' }),
+        trip({ id: 2, startedAt: at('2026-08-21T17:00:00Z'), endedAt: at('2026-08-21T17:30:00Z') }),
+      ],
+      fixes: GAP_FIXES,
+      odometer: [
+        { at: at('2026-08-21T09:30:00Z'), mileageKm: 1000 },
+        { at: at('2026-08-21T17:00:00Z'), mileageKm: 1000 },
+      ],
+    });
+
+    expect(plan.updates.find((u) => u.tripId === 2)).toMatchObject({ startPlaceId: OFFICE.id, originSource: 'chained' });
+  });
+
+  it('still lets geometry overwrite a destination when an arrival fix exists', () => {
+    const plan = planRematch({
+      ...BASE_INPUT,
+      trips: [trip({ id: 1, endPlaceId: OFFICE.id, endPlaceConfidence: 'high' })],
+      fixes: [fix('2026-08-21T09:34:00Z', north(2_000))],
+    });
+
+    expect(plan.updates[0]).toMatchObject({ endPlaceId: null, endPlaceConfidence: 'none' });
+  });
 });
 
 describe('planRematch — origin chaining', () => {

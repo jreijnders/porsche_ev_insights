@@ -160,10 +160,17 @@ export function planRematch(input: PlanInput): RematchPlan {
     }
 
     // ---- destination: geometry against the first fix after arrival ----------
+    // No arrival fix means geometry has nothing to say about the destination,
+    // so it must not overwrite what is there. Any end place such a trip carries
+    // was set by hand in the naming panel's manual mode — the same reasoning
+    // that skips pre-tracking trips, applied to a gap in tracking rather than
+    // its absence. Writing null here would silently undo that answer.
     const arrival = selectArrivalFix(trip.endedAt, fixes, toleranceMinutes);
     const endMatch = arrival
       ? matchPlace(arrival.fix, places)
-      : { placeId: null, confidence: 'none' as Confidence, distanceM: null, runnerUpDistanceM: null };
+      : trip.endPlaceId !== null
+        ? { placeId: trip.endPlaceId, confidence: trip.endPlaceConfidence ?? ('high' as Confidence) }
+        : { placeId: null, confidence: 'none' as Confidence };
 
     // ---- origin: chain first, geometry second, nothing third ---------------
     let startPlaceId: number | null = null;

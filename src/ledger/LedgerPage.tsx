@@ -606,8 +606,14 @@ function TripRow({
   // The panel opens on an unmatched arrival AND on a low-confidence one: a
   // wrong place is worse than no place, because it looks settled (#30).
   // Pre-tracking trips are nameable too now (#30): they have no coordinate, so
-  // the panel opens in manual mode instead of refusing.
-  const nameable = trip.endPlace === null || trip.endPlaceConfidence === 'low' || preTracking;
+  // the panel opens in manual mode instead of refusing. Same for a trip that
+  // ended in a gap in tracking (no arrival fix) — once named by hand it reads
+  // as settled, but it must stay correctable.
+  const nameable =
+    trip.endPlace === null ||
+    trip.endPlaceConfidence === 'low' ||
+    preTracking ||
+    trip.endFixDeltaMinutes === null;
   const cell = 'px-3 py-2 align-middle';
 
   return (
