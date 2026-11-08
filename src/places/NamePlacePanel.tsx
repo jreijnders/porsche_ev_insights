@@ -10,13 +10,13 @@
  *   2. places you already know within 1 km, with widen offered per candidate
  *   3. "wie zit hier?" — Google's own component, on demand, never automatic
  *
- * Google contributes a place_id and NOTHING else. You type the label having
- * read the name on screen: reading displayName out of the UI Kit element into
- * our own field and saving it is caching a Google name with extra steps, and
- * #5 found no permission for that at any duration.
+ * Google contributes a place_id, and picking a result prefills the label with
+ * its displayName — editable before saving. NOTE: #5 found no Maps ToS
+ * permission to store a Google name at any duration; prefilling was chosen
+ * deliberately anyway (owner's call, private self-hosted ledger).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { PillButton } from '../components/layout/LedgerShell';
 
@@ -48,12 +48,15 @@ export interface NamingEvidence {
    * 'fix' — the trip has an arrival coordinate, so geometry decides and the
    * panel offers nearby places and widening.
    *
-   * 'manual' — the trip predates position tracking (#22), so there is no
-   * coordinate and never will be. Nothing to widen towards and nothing nearby;
-   * you either point at a place you have or name one by address. Matching
-   * skips these trips entirely, so the answer sticks.
+   * 'manual' — the trip has no arrival fix: it predates position tracking
+   * (#22), or ended in a gap in it. No coordinate, and never will be. Nothing
+   * to widen towards and nothing nearby; you either point at a place you have
+   * or name one by address. Matching leaves these destinations alone, so the
+   * answer sticks.
    */
   mode?: 'fix' | 'manual';
+  /** Manual mode only: true when tracking had not started, false for a gap. */
+  preTracking?: boolean;
   at: { lat: number; lon: number } | null;
   address: string | null;
   candidates: NamingCandidate[];
@@ -88,15 +91,10 @@ const KINDS: { value: 'home' | 'business' | 'other'; label: string }[] = [
   { value: 'other', label: 'other' },
 ];
 
-export default function NamePlacePanel({
-  evidence,
-  busy,
-  onCreate,
-  onWiden,
-  onAttach,
-  onCreateAt,
-  onClose,
-}: NamePlacePanelProps) {
+export default function NamePlacePanel(props: NamePlacePanelProps) {
+  const { evidence, busy, onAttach, onCreateAt, onClose } = props;
+  // Two components rather than an early return inside one: the fix panel holds
+  // state, and hooks may not sit behind a condition.
   if (evidence.mode === 'manual') {
     return (
       <ManualPanel
@@ -108,11 +106,18 @@ export default function NamePlacePanel({
       />
     );
   }
+  return <FixPanel {...props} />;
+}
 
+function FixPanel({ evidence, busy, onCreate, onWiden, onClose }: NamePlacePanelProps) {
   const [label, setLabel] = useState('');
   const [kind, setKind] = useState<'home' | 'business' | 'other'>('business');
   const [googlePlaceId, setGooglePlaceId] = useState<string | null>(null);
   const [googleOpen, setGoogleOpen] = useState(false);
+  const onGooglePick = useCallback((id: string, name: string | null) => {
+    setGooglePlaceId(id);
+    if (name) setLabel(name);
+  }, []);
 
   return (
     <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-3 text-sm">
@@ -235,7 +240,7 @@ export default function NamePlacePanel({
         </div>
         {googlePlaceId && (
           <p className="mt-1 text-xs text-zinc-500">
-            Google place linked (id kept, name not — you type that yourself).{' '}
+            Google place linked — name copied into the field above, edit it if you like.{' '}
             <button type="button" onClick={() => setGooglePlaceId(null)} className="underline underline-offset-2">
               unlink
             </button>
@@ -248,7 +253,7 @@ export default function NamePlacePanel({
         {googleOpen ? (
           <GooglePanel
             at={evidence.at ?? { lat: 0, lon: 0 }}
-            onPick={(id) => setGooglePlaceId(id)}
+            onPick={onGooglePick}
             picked={googlePlaceId}
             onClose={() => setGoogleOpen(false)}
           />
@@ -272,8 +277,8 @@ export default function NamePlacePanel({
  * The Places UI Kit, rendering Google's own content.
  *
  * Google's markup, Google's attribution, our zero strings — that is what makes
- * this permitted (#5, EEA §15.3). We read `place.id` off the selection event
- * and nothing else.
+ * this permitted (#5, EEA §15.3). We read `place.id` and `displayName` off
+ * the selection event — the name only to prefill the editable label.
  *
  * Nearby first, because you are here because a trip ended here. The text field
  * is for the case the nearby list misses.
@@ -286,12 +291,28 @@ function GooglePanel({
 }: {
   at: { lat: number; lon: number };
   picked: string | null;
-  onPick: (placeId: string) => void;
+  onPick: (placeId: string, name: string | null) => void;
   onClose: () => void;
 }) {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [query, setQuery] = useState('');
+  // What the widget actually searches for, a beat behind the input: every
+  // change rebuilds the element and costs a Places request, so not per key.
+  const [searched, setSearched] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearched(query.trim()), 400);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  // Through a ref, not the effect's deps. Callers pass a fresh function on
+  // every render, and a pick re-renders the caller — as a dep that tore the
+  // widget down and re-ran the search the moment you clicked a result, so the
+  // selection never stuck.
+  const onPickRef = useRef(onPick);
+  useEffect(() => {
+    onPickRef.current = onPick;
+  }, [onPick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -317,27 +338,43 @@ function GooglePanel({
     // Nearby unless you typed something. Both are Place Search requests, so
     // switching modes is one element swap rather than a second widget.
     const request = document.createElement(
-      query.trim() === '' ? 'gmp-place-nearby-search-request' : 'gmp-place-text-search-request',
+      searched === '' ? 'gmp-place-nearby-search-request' : 'gmp-place-text-search-request',
     ) as HTMLElement & {
       locationRestriction?: unknown;
       locationBias?: unknown;
       textQuery?: string;
     };
 
-    if (query.trim() === '') {
+    if (searched === '') {
       request.locationRestriction = { center: { lat: at.lat, lng: at.lon }, radius: 150 };
     } else {
-      request.textQuery = query.trim();
+      request.textQuery = searched;
       request.locationBias = { center: { lat: at.lat, lng: at.lon }, radius: 2_000 };
     }
     search.appendChild(request);
 
+    type PickedPlace = {
+      id?: string;
+      displayName?: string | null;
+      fetchFields?: (o: { fields: string[] }) => Promise<{ place: { displayName?: string | null } }>;
+    };
     const onSelect = (event: Event) => {
-      // The ID is all we take. Reading displayName here and putting it in the
-      // label field would be caching a Google name (#5) — the human types it.
-      const place = (event as CustomEvent<{ place?: { id?: string } }>).detail?.place
-        ?? (event as unknown as { place?: { id?: string } }).place;
-      if (place?.id) onPick(place.id);
+      const place = (event as CustomEvent<{ place?: PickedPlace }>).detail?.place
+        ?? (event as unknown as { place?: PickedPlace }).place;
+      if (!place?.id) return;
+      const id = place.id;
+      // The search result usually carries displayName already; fetch it only
+      // if not. A failed fetch still links the id — you type the name.
+      if (place.displayName) {
+        onPickRef.current(id, place.displayName);
+      } else if (place.fetchFields) {
+        place
+          .fetchFields({ fields: ['displayName'] })
+          .then(({ place: full }) => onPickRef.current(id, full.displayName ?? null))
+          .catch(() => onPickRef.current(id, null));
+      } else {
+        onPickRef.current(id, null);
+      }
     };
     search.addEventListener('gmp-select', onSelect);
     mount.appendChild(search);
@@ -346,7 +383,7 @@ function GooglePanel({
       search.removeEventListener('gmp-select', onSelect);
       mount.replaceChildren();
     };
-  }, [state, at.lat, at.lon, query, onPick]);
+  }, [state, at.lat, at.lon, searched]);
 
   return (
     <div className="rounded-xl border border-zinc-200 bg-white/60 p-2 dark:border-zinc-800 dark:bg-zinc-950/40">
@@ -378,10 +415,11 @@ function GooglePanel({
 /* ------------------------------------------------------ manual mode (#30) */
 
 /**
- * Naming a trip that predates position tracking.
+ * Naming a trip with no arrival fix — it predates position tracking, or ended
+ * in a gap in it.
  *
  * These trips have no coordinate and never will: the car was not reporting
- * position when they happened. The rest of the panel is built on geometry —
+ * position when they ended. The rest of the panel is built on geometry —
  * nearest place, distance, widen-to-reach — and none of it applies, so this is
  * a different screen rather than the same one with the numbers blanked out.
  *
@@ -418,6 +456,10 @@ function ManualPanel({
   const [searching, setSearching] = useState(false);
   const [googlePlaceId, setGooglePlaceId] = useState<string | null>(null);
   const [googleOpen, setGoogleOpen] = useState(false);
+  const onGooglePick = useCallback((id: string, name: string | null) => {
+    setGooglePlaceId(id);
+    if (name) setLabel(name);
+  }, []);
 
   const book = evidence.places ?? [];
   const needle = filter.trim().toLowerCase();
@@ -449,7 +491,9 @@ function ManualPanel({
         <div>
           <div className="font-medium">Set the place by hand</div>
           <p className="text-xs text-zinc-500">
-            This trip predates position tracking — no position was ever recorded, so you say where it ended.
+            {evidence.preTracking === false
+              ? 'No position was recorded around the end of this trip, so you say where it ended.'
+              : 'This trip predates position tracking — no position was ever recorded, so you say where it ended.'}{' '}
             That sticks: matching leaves these trips alone.
           </p>
         </div>
@@ -555,9 +599,9 @@ function ManualPanel({
         </div>
         {googlePlaceId && (
           <p className="mt-1 text-xs text-zinc-500">
-            Google-locatie gekoppeld (id bewaard, naam niet — die typ je zelf).{' '}
+            Google place linked — name copied into the field above, edit it if you like.{' '}
             <button type="button" onClick={() => setGooglePlaceId(null)} className="underline underline-offset-2">
-              loskoppelen
+              unlink
             </button>
           </p>
         )}
@@ -574,7 +618,7 @@ function ManualPanel({
             // No coordinate to search around, so the text search carries this
             // panel; the bias below just keeps Dutch results above foreign ones.
             at={{ lat: 52.1, lon: 5.3 }}
-            onPick={(id) => setGooglePlaceId(id)}
+            onPick={onGooglePick}
             picked={googlePlaceId}
             onClose={() => setGoogleOpen(false)}
           />
